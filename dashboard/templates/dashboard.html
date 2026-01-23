@@ -1,0 +1,845 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XFL-RPiLab Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: #1a1d2e;
+            color: #e0e0e0;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        .dashboard-container {
+            display: grid;
+            grid-template-columns: 220px 1fr 280px;
+            height: calc(100vh - 50px);
+            gap: 0;
+        }
+
+        /* ===== LEFT PANEL ===== */
+        .config-panel {
+            background: #252942;
+            padding: 15px;
+            overflow-y: auto;
+            border-right: 1px solid #2d3348;
+        }
+
+        .panel-title {
+            font-size: 13px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 15px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #2d3348;
+        }
+
+        .config-section {
+            margin-bottom: 20px;
+        }
+
+        .config-section h3 {
+            font-size: 11px;
+            color: #888;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .info-card {
+            background: #1a1d2e;
+            border-radius: 4px;
+            padding: 10px;
+            margin-bottom: 10px;
+            border: 1px solid #2d3348;
+        }
+
+        .info-label {
+            font-size: 10px;
+            color: #888;
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            font-size: 18px;
+            font-weight: 600;
+            color: #4fc3f7;
+        }
+
+        .select-box {
+            width: 100%;
+            background: #1a1d2e;
+            border: 1px solid #2d3348;
+            color: #e0e0e0;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-bottom: 8px;
+        }
+
+        .param-input {
+            width: 100%;
+            background: #1a1d2e;
+            border: 1px solid #2d3348;
+            color: #e0e0e0;
+            padding: 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            margin-bottom: 12px;
+        }
+
+        .xfl-status {
+            background: #1a1d2e;
+            border-radius: 4px;
+            padding: 8px;
+            margin-bottom: 12px;
+            border: 1px solid #4fc3f7;
+            font-size: 10px;
+        }
+
+        .xfl-status .label {
+            color: #888;
+            margin-bottom: 4px;
+        }
+
+        .xfl-status .value {
+            color: #4fc3f7;
+            font-weight: 600;
+        }
+
+        .action-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 15px;
+        }
+
+        .btn {
+            padding: 10px;
+            border: none;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-transform: uppercase;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #4fc3f7;
+            color: #1a1d2e;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #29b6f6;
+        }
+
+        .btn-warning {
+            background: #ffa726;
+            color: #1a1d2e;
+        }
+
+        .btn-warning:hover:not(:disabled) {
+            background: #fb8c00;
+        }
+
+        .btn-danger {
+            background: #ef5350;
+            color: #fff;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #e53935;
+        }
+
+        .btn-success {
+            background: #66bb6a;
+            color: #fff;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #4caf50;
+        }
+
+        /* ===== CENTER PANEL ===== */
+        .testbed-panel {
+            background: #1a1d2e;
+            padding: 15px;
+            overflow-y: auto;
+        }
+
+        .testbed-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 8px;
+            margin-bottom: 15px;
+        }
+
+        .progress-container {
+            background: #252942;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 15px;
+            border: 1px solid #2d3348;
+            display: none;
+        }
+
+        .progress-container.active {
+            display: block;
+        }
+
+        .progress-title {
+            font-size: 11px;
+            color: #fff;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        .progress-bar-bg {
+            background: #1a1d2e;
+            height: 20px;
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-bar-fill {
+            background: linear-gradient(90deg, #4fc3f7, #29b6f6);
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 10px;
+        }
+
+        .progress-text {
+            font-size: 10px;
+            color: #fff;
+            font-weight: 600;
+            position: absolute;
+            width: 100%;
+            text-align: center;
+            line-height: 20px;
+        }
+
+        .progress-status {
+            font-size: 10px;
+            color: #888;
+            margin-top: 8px;
+            text-align: center;
+        }
+
+        .pi-card {
+            background: #252942;
+            border-radius: 4px;
+            padding: 8px;
+            border: 1px solid #2d3348;
+            transition: all 0.3s;
+            cursor: pointer;
+            position: relative;
+            min-height: 60px;
+        }
+
+        .pi-card:hover {
+            transform: translateY(-2px);
+            border-color: #4fc3f7;
+        }
+
+        .pi-card.active {
+            background: #66bb6a;
+            border-color: #66bb6a;
+        }
+
+        .pi-card.training {
+            background: #4fc3f7;
+            border-color: #4fc3f7;
+            animation: pulse 2s infinite;
+        }
+
+        .pi-card.error {
+            background: #ef5350;
+            border-color: #ef5350;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .pi-id {
+            font-size: 10px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 6px;
+        }
+
+        .pi-status {
+            font-size: 8px;
+            color: rgba(255,255,255,0.7);
+            margin-bottom: 3px;
+        }
+
+        .pi-metrics {
+            font-size: 7px;
+            color: rgba(255,255,255,0.6);
+        }
+
+        .legend-container {
+            display: flex;
+            gap: 15px;
+            padding: 12px;
+            background: #252942;
+            border-radius: 4px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 10px;
+        }
+
+        .legend-color {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+        }
+
+        /* ===== RIGHT PANEL ===== */
+        .metrics-panel {
+            background: #252942;
+            padding: 15px;
+            overflow-y: auto;
+            border-left: 1px solid #2d3348;
+        }
+
+        .chart-container {
+            background: #1a1d2e;
+            border-radius: 4px;
+            padding: 12px;
+            margin-bottom: 15px;
+            border: 1px solid #2d3348;
+        }
+
+        .chart-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 10px;
+        }
+
+        .chart-wrapper {
+            height: 140px;
+            position: relative;
+        }
+
+        .export-btn {
+            width: 100%;
+            margin-bottom: 15px;
+        }
+
+        .history-table {
+            background: #1a1d2e;
+            border-radius: 4px;
+            padding: 12px;
+            border: 1px solid #2d3348;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .history-table table {
+            width: 100%;
+            font-size: 9px;
+            border-collapse: collapse;
+        }
+
+        .history-table th {
+            color: #888;
+            text-align: left;
+            padding: 6px 4px;
+            font-weight: 500;
+            border-bottom: 1px solid #2d3348;
+            position: sticky;
+            top: 0;
+            background: #1a1d2e;
+        }
+
+        .history-table td {
+            padding: 6px 4px;
+            color: #e0e0e0;
+            border-bottom: 1px solid #2d3348;
+        }
+
+        .history-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .history-table tr:hover {
+            background: #252942;
+        }
+
+        /* Header */
+        .header {
+            background: #252942;
+            padding: 12px 15px;
+            border-bottom: 1px solid #2d3348;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .status-badge {
+            background: #66bb6a;
+            color: #fff;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+
+        .scrollbar-custom::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .scrollbar-custom::-webkit-scrollbar-track {
+            background: #1a1d2e;
+        }
+
+        .scrollbar-custom::-webkit-scrollbar-thumb {
+            background: #4fc3f7;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔷 XFL-RPiLab</h1>
+        <div class="status-badge" id="status-badge">● LIVE</div>
+    </div>
+
+    <div class="dashboard-container">
+        <!-- LEFT PANEL -->
+        <div class="config-panel scrollbar-custom">
+            <div class="panel-title">Control Panel</div>
+
+            <div class="config-section">
+                <h3>Experiment Status</h3>
+                <div class="info-card">
+                    <div class="info-label">Current Round</div>
+                    <div class="info-value" id="current-round">-</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-label">Active Clients</div>
+                    <div class="info-value" id="active-clients">-</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-label">Latest Accuracy</div>
+                    <div class="info-value" id="latest-accuracy">-</div>
+                </div>
+            </div>
+
+            <div class="config-section">
+                <h3>XFL Strategy</h3>
+                
+                <div class="xfl-status" id="current-xfl-status">
+                    <div class="label">Current Strategy:</div>
+                    <div class="value" id="xfl-current">All Layers</div>
+                </div>
+
+                <select class="select-box" id="strategy-select">
+                    <option value="all_layers">All Layers</option>
+                    <option value="first_n_layers">First N Layers</option>
+                    <option value="last_n_layers">Last N Layers</option>
+                    <option value="random_layers">Random Layers</option>
+                </select>
+
+                <input type="number" class="param-input" id="xfl-param-input" 
+                       min="1" max="10" value="2" placeholder="N (number of layers)">
+
+                <button class="btn btn-warning" onclick="applyXflStrategy()">
+                    🔄 APPLY XFL STRATEGY
+                </button>
+            </div>
+
+            <div class="action-buttons">
+                <button class="btn btn-primary" onclick="startRound()">▶️ START ROUND</button>
+                <button class="btn btn-danger" onclick="stopExperiment()">⏹️ STOP EXPERIMENT</button>
+            </div>
+        </div>
+
+        <!-- CENTER PANEL -->
+        <div class="testbed-panel scrollbar-custom">
+            <div class="panel-title">Testbed Monitoring (40 Raspberry Pi)</div>
+            
+            <div class="legend-container">
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #66bb6a;"></div>
+                    <span>Active</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #4fc3f7;"></div>
+                    <span>Training</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #252942;"></div>
+                    <span>Idle</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ef5350;"></div>
+                    <span>Error</span>
+                </div>
+            </div>
+
+            <div class="testbed-grid" id="testbed-grid">
+                <!-- Generated by JS -->
+            </div>
+
+            <div class="progress-container" id="progress-container">
+                <div class="progress-title">Round Progress</div>
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill" id="progress-bar"></div>
+                    <div class="progress-text" id="progress-text">0%</div>
+                </div>
+                <div class="progress-status" id="progress-status">Waiting for clients...</div>
+            </div>
+        </div>
+
+        <!-- RIGHT PANEL -->
+        <div class="metrics-panel scrollbar-custom">
+            <div class="panel-title">Metrics Visualization</div>
+
+            <button class="btn btn-primary export-btn" onclick="exportData()">💾 Export to CSV</button>
+
+            <div class="chart-container">
+                <div class="chart-title">▲ Accuracy Evolution</div>
+                <div class="chart-wrapper">
+                    <canvas id="accuracyChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">📉 Loss Evolution</div>
+                <div class="chart-wrapper">
+                    <canvas id="lossChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">📊 Bandwidth Usage (MB)</div>
+                <div class="chart-wrapper">
+                    <canvas id="bandwidthChart"></canvas>
+                </div>
+            </div>
+
+            <div class="history-table">
+                <div class="chart-title">📜 Rounds History</div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Round</th>
+                            <th>Accuracy</th>
+                            <th>Loss</th>
+                            <th>Time(s)</th>
+                            <th>Clients</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-tbody">
+                        <tr>
+                            <td colspan="5" style="text-align: center; color: #888;">No data yet</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const NUM_DEVICES = 40;
+        let currentRoundInProgress = false;
+
+        // Initialize testbed grid
+        function initTestbedGrid() {
+            const grid = document.getElementById('testbed-grid');
+            for (let i = 0; i < NUM_DEVICES; i++) {
+                const card = document.createElement('div');
+                card.className = 'pi-card';
+                card.id = `pi-${i}`;
+                card.innerHTML = `
+                    <div class="pi-id">Pi ${String(i).padStart(2, '0')}</div>
+                    <div class="pi-status">Idle</div>
+                    <div class="pi-metrics">CPU: -</div>
+                `;
+                grid.appendChild(card);
+            }
+        }
+
+        // Update Pi card
+        function updatePiCard(id, state, metrics = {}) {
+            const card = document.getElementById(`pi-${id}`);
+            if (!card) return;
+
+            card.className = 'pi-card ' + state;
+            
+            const statusText = {
+                'idle': 'Idle',
+                'active': 'Active',
+                'training': 'Training',
+                'error': 'Error'
+            };
+
+            card.querySelector('.pi-status').textContent = statusText[state] || 'Idle';
+            
+            if (metrics.cpu) {
+                card.querySelector('.pi-metrics').textContent = `CPU: ${metrics.cpu}%`;
+            }
+        }
+
+        // Charts configuration
+        const chartConfig = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { grid: { color: '#2d3348' }, ticks: { color: '#888', font: { size: 9 } } },
+                y: { grid: { color: '#2d3348' }, ticks: { color: '#888', font: { size: 9 } } }
+            }
+        };
+
+        const accuracyChart = new Chart(document.getElementById('accuracyChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    data: [],
+                    borderColor: '#4fc3f7',
+                    backgroundColor: 'rgba(79, 195, 247, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 3
+                }]
+            },
+            options: chartConfig
+        });
+
+        const lossChart = new Chart(document.getElementById('lossChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    data: [],
+                    borderColor: '#ef5350',
+                    backgroundColor: 'rgba(239, 83, 80, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 3
+                }]
+            },
+            options: chartConfig
+        });
+
+        const bandwidthChart = new Chart(document.getElementById('bandwidthChart'), {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    data: [],
+                    backgroundColor: '#4fc3f7',
+                    borderColor: '#29b6f6',
+                    borderWidth: 1
+                }]
+            },
+            options: chartConfig
+        });
+
+        // *** NEW: Apply XFL Strategy ***
+        async function applyXflStrategy() {
+            const strategy = document.getElementById('strategy-select').value;
+            const param = parseInt(document.getElementById('xfl-param-input').value) || 2;
+
+            // Check if round is in progress
+            if (currentRoundInProgress) {
+                alert('⚠️ Cannot change XFL strategy during an active round!');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/xfl/set_strategy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ strategy, param })
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    alert(`✅ XFL Strategy updated to: ${strategy} (N=${param})`);
+                    // Update display
+                    updateXflDisplay(strategy, param);
+                } else {
+                    alert(`❌ Error: ${data.message}`);
+                }
+            } catch (error) {
+                alert(`❌ Error applying XFL strategy: ${error.message}`);
+            }
+        }
+
+        // Update XFL display
+        function updateXflDisplay(strategy, param) {
+            const strategyNames = {
+                'all_layers': 'All Layers',
+                'first_n_layers': `First ${param} Layers`,
+                'last_n_layers': `Last ${param} Layers`,
+                'random_layers': `Random ${param} Layers`
+            };
+            
+            document.getElementById('xfl-current').textContent = strategyNames[strategy] || strategy;
+        }
+
+        // Update dashboard
+        async function updateDashboard() {
+            try {
+                const [status, accuracy, loss, clients, bandwidth, history] = await Promise.all([
+                    fetch('/api/status').then(r => r.json()),
+                    fetch('/api/accuracy').then(r => r.json()),
+                    fetch('/api/loss').then(r => r.json()),
+                    fetch('/api/clients').then(r => r.json()),
+                    fetch('/api/bandwidth').then(r => r.json()),
+                    fetch('/api/rounds_history').then(r => r.json())
+                ]);
+
+                // Update XFL display
+                if (status.xfl_strategy) {
+                    updateXflDisplay(status.xfl_strategy, status.xfl_param || 2);
+                }
+
+                // Track round progress
+                currentRoundInProgress = status.round_in_progress;
+
+                // Update status cards
+                document.getElementById('current-round').textContent = 
+                    status.current_round + '/' + (status.total_rounds || '?');
+                document.getElementById('active-clients').textContent = status.total_clients || 0;
+                document.getElementById('latest-accuracy').textContent = 
+                    status.latest_accuracy ? status.latest_accuracy.toFixed(1) + '%' : '-';
+
+                // Update progress bar
+                const progressContainer = document.getElementById('progress-container');
+                const progressBar = document.getElementById('progress-bar');
+                const progressText = document.getElementById('progress-text');
+                const progressStatus = document.getElementById('progress-status');
+
+                if (status.round_in_progress) {
+                    progressContainer.classList.add('active');
+                    
+                    const percentage = Math.round((status.submissions_received / status.clients_expected) * 100);
+                    progressBar.style.width = percentage + '%';
+                    progressText.textContent = percentage + '%';
+                    progressStatus.textContent = `Received ${status.submissions_received}/${status.clients_expected} client submissions`;
+                } else {
+                    progressContainer.classList.remove('active');
+                }
+
+                // Update charts
+                accuracyChart.data.labels = accuracy.rounds;
+                accuracyChart.data.datasets[0].data = accuracy.accuracy;
+                accuracyChart.update('none');
+
+                lossChart.data.labels = loss.rounds;
+                lossChart.data.datasets[0].data = loss.loss;
+                lossChart.update('none');
+
+                bandwidthChart.data.labels = bandwidth.labels || [];
+                bandwidthChart.data.datasets[0].data = bandwidth.values || [];
+                bandwidthChart.update('none');
+
+                // Update Pi cards
+                clients.clients.forEach(client => {
+                    if (client.client_id < NUM_DEVICES) {
+                        updatePiCard(client.client_id, client.state, { 
+                            cpu: client.avg_cpu 
+                        });
+                    }
+                });
+
+                // Update history table
+                const tbody = document.getElementById('history-tbody');
+                if (history.rounds && history.rounds.length > 0) {
+                    tbody.innerHTML = history.rounds.map(r => `
+                        <tr>
+                            <td>${r.round}</td>
+                            <td>${r.accuracy ? r.accuracy.toFixed(2) + '%' : '-'}</td>
+                            <td>${r.loss ? r.loss.toFixed(4) : '-'}</td>
+                            <td>${r.agg_time ? r.agg_time.toFixed(2) : '-'}</td>
+                            <td>${r.clients || '-'}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #888;">No rounds yet</td></tr>';
+                }
+
+            } catch (error) {
+                console.error('Update error:', error);
+            }
+        }
+
+        // Button actions
+        async function startRound() {
+            try {
+                const response = await fetch('/api/start_round', { method: 'POST' });
+                const data = await response.json();
+                if (data.status === 'started') {
+                    alert(`✅ Round ${data.round} started with XFL: ${data.xfl_strategy || 'all_layers'}`);
+                } else {
+                    alert('⚠️ ' + (data.message || 'Could not start round'));
+                }
+            } catch (error) {
+                alert('❌ Error: ' + error.message);
+            }
+        }
+
+        async function stopExperiment() {
+            if (!confirm('Stop current experiment and collect all data?')) return;
+            alert('Experiment stopped. Data is being collected...');
+        }
+
+        async function exportData() {
+            try {
+                const response = await fetch('/api/export');
+                const data = await response.json();
+                alert('✅ ' + data.message);
+            } catch (error) {
+                alert('❌ Export failed: ' + error.message);
+            }
+        }
+
+        // Initialize
+        initTestbedGrid();
+        updateDashboard();
+        setInterval(updateDashboard, 2000);
+    </script>
+</body>
+</html>
