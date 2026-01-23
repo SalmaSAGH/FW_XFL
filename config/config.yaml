@@ -1,0 +1,72 @@
+# XFL-RPiLab Configuration File
+
+# Experiment Information
+experiment:
+  name: "mnist_fedavg_baseline"
+  description: "Baseline experiment with FedAvg on MNIST"
+  seed: 42  # For reproducibility
+
+# Federated Learning Parameters
+federated_learning:
+  num_rounds: 10  # Number of FL rounds
+  num_clients: 5  # Total number of clients
+  clients_per_round: 5  # Clients participating per round (can be < num_clients)
+  local_epochs: 1  # Number of local training epochs per client
+  
+# Dataset Configuration
+dataset:
+  name: "MNIST"  # MNIST, CIFAR10, FashionMNIST
+  data_distribution: "iid"  # iid or non_iid
+  train_test_split: 0.8
+  batch_size: 32
+  
+# Model Configuration
+model:
+  name: "SimpleCNN"  # SimpleCNN, LeNet5
+  input_shape: [1, 28, 28]  # [channels, height, width]
+  num_classes: 10
+  
+# Training Parameters
+training:
+  optimizer: "sgd"  # sgd, adam
+  learning_rate: 0.01
+  momentum: 0.9  # For SGD
+  weight_decay: 0.0001
+  
+# Layer-wise Strategy
+strategy:
+  type: "all_layers"  # all_layers, first_n_layers, last_n_layers, random_layers
+  num_layers: null  # Used for first_n_layers, last_n_layers (null means all)
+  
+# Network Constraints (Simulation)
+network:
+  simulate_constraints: true
+  latency_ms: 50  # Average latency in milliseconds
+  latency_std_ms: 10  # Standard deviation of latency
+  bandwidth_mbps: 10  # Bandwidth in Mbps
+  packet_loss_rate: 0.0  # Packet loss probability (0.0 to 1.0)
+  jitter_ms: 5  # Network jitter
+  
+# System Resources Monitoring
+monitoring:
+  enabled: true
+  metrics_interval_sec: 5  # Collect metrics every N seconds
+  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  
+# Server Configuration
+server:
+  host: "localhost"
+  port: 5000
+  aggregation_method: "fedavg"  # fedavg (Federated Averaging)
+  
+# Client Configuration
+client:
+  timeout_sec: 300  # Timeout for client training
+  max_retries: 3  # Max connection retries
+  
+# Paths
+paths:
+  data_dir: "./data"
+  models_dir: "./models"
+  logs_dir: "./logs"
+  results_dir: "./results"
