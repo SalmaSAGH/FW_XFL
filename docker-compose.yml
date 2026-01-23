@@ -1,0 +1,138 @@
+version: '3.8'
+
+services:
+  # FL Server
+  server:
+    image: xfl-rpilab-client:latest
+    container_name: xfl-server
+    command: python -m server.run_server_standalone
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./server:/app/server
+      - ./client:/app/client
+      - ./config:/app/config
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NUM_CLIENTS=5
+    networks:
+      - fl-network
+
+  # Dashboard
+  dashboard:
+    image: xfl-rpilab-client:latest
+    container_name: xfl-dashboard
+    command: python -m dashboard.run_dashboard_standalone
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./logs:/app/logs
+      - ./dashboard:/app/dashboard
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NUM_CLIENTS=5
+    depends_on:
+      - server
+    networks:
+      - fl-network
+
+  # Client 0
+  client-0:
+    image: xfl-rpilab-client:latest
+    container_name: xfl-client-0
+    command: python -m client.run_client_standalone --client-id 0 --server-host server --num-clients 5 --batch-size 256
+    volumes:
+      - ./data:/app/data:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - server
+    networks:
+      - fl-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
+
+  # Client 1
+  client-1:
+    image: xfl-rpilab-client:latest
+    container_name: xfl-client-1
+    command: python -m client.run_client_standalone --client-id 1 --server-host server --num-clients 5 --batch-size 256
+    volumes:
+      - ./data:/app/data:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - server
+    networks:
+      - fl-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
+
+  # Client 2
+  client-2:
+    image: xfl-rpilab-client:latest
+    container_name: xfl-client-2
+    command: python -m client.run_client_standalone --client-id 2 --server-host server --num-clients 5 --batch-size 256
+    volumes:
+      - ./data:/app/data:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - server
+    networks:
+      - fl-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
+
+  # Client 3
+  client-3:
+    image: xfl-rpilab-client:latest
+    container_name: xfl-client-3
+    command: python -m client.run_client_standalone --client-id 3 --server-host server --num-clients 5 --batch-size 256
+    volumes:
+      - ./data:/app/data:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - server
+    networks:
+      - fl-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
+
+  # Client 4
+  client-4:
+    image: xfl-rpilab-client:latest
+    container_name: xfl-client-4
+    command: python -m client.run_client_standalone --client-id 4 --server-host server --num-clients 5 --batch-size 256
+    volumes:
+      - ./data:/app/data:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - server
+    networks:
+      - fl-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 1024M
+
+networks:
+  fl-network:
+    driver: bridge
