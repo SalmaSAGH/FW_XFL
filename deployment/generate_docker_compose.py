@@ -64,7 +64,7 @@ services:
   client-{i}:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-{i}
-    command: python -m client.run_client_standalone --client-id {i} --server-host server --num-clients {num_clients} --batch-size 512
+    command: python -m client.run_client_standalone --client-id {i} --server-host server --num-clients {num_clients} --batch-size 1024
     volumes:
       - ./data:/app/data:ro
     environment:
