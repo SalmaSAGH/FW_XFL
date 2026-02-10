@@ -76,6 +76,26 @@
             color: #4fc3f7;
         }
 
+        .xfl-indicator {
+            background: #2d3348;
+            border-radius: 4px;
+            padding: 8px;
+            margin-bottom: 10px;
+            border: 1px solid #4fc3f7;
+        }
+
+        .xfl-label {
+            font-size: 10px;
+            color: #4fc3f7;
+            margin-bottom: 3px;
+        }
+
+        .xfl-value {
+            font-size: 12px;
+            font-weight: 600;
+            color: #fff;
+        }
+
         .select-box {
             width: 100%;
             background: #1a1d2e;
@@ -469,14 +489,14 @@
                 </div>
 
                 <select class="select-box" id="strategy-select">
-                    <option value="all_layers">All Layers</option>
-                    <option value="first_n_layers">First N Layers</option>
-                    <option value="last_n_layers">Last N Layers</option>
-                    <option value="random_layers">Random Layers</option>
+                    <option value="all_layers">All Layers (FedAvg)</option>
+                    <option value="xfl_cyclic">XFL - Cyclic</option>
+                    <option value="xfl_sparsification">XFL - Sparsification</option>
+                    <option value="xfl_quantization">XFL - Quantization</option>
                 </select>
 
-                <input type="number" class="param-input" id="xfl-param-input" 
-                       min="1" max="10" value="2" placeholder="N (number of layers)">
+                <input type="number" class="param-input" id="xfl-param-input"
+                       min="1" max="10" value="1" placeholder="N (for FedAvg) or threshold (for XFL)">
 
                 <button class="btn btn-warning" onclick="applyXflStrategy()">
                     🔄 APPLY XFL STRATEGY
@@ -710,12 +730,12 @@
         // Update XFL display
         function updateXflDisplay(strategy, param) {
             const strategyNames = {
-                'all_layers': 'All Layers',
-                'first_n_layers': `First ${param} Layers`,
-                'last_n_layers': `Last ${param} Layers`,
-                'random_layers': `Random ${param} Layers`
+                'all_layers': 'All Layers (FedAvg)',
+                'xfl_cyclic': 'XFL - Cyclic',
+                'xfl_sparsification': `XFL - Sparsification (${param})`,
+                'xfl_quantization': `XFL - Quantization (${param} bits)`
             };
-            
+
             document.getElementById('xfl-current').textContent = strategyNames[strategy] || strategy;
         }
 

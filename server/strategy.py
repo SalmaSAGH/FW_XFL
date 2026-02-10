@@ -155,12 +155,105 @@ class FedProx(FedAvg):
     FedProx: Federated Optimization with Proximal Term
     Extension of FedAvg with regularization
     """
-    
+
     def __init__(self, mu: float = 0.01, xfl_strategy: str = "all_layers", xfl_param: int = 3):
         super().__init__(xfl_strategy, xfl_param)
         self.name = "FedProx"
         self.mu = mu  # Proximal term coefficient
         print(f"⚠️  FedProx proximal term (μ={mu}) - client-side implementation needed")
+
+
+class XFL(FedAvg):
+    """
+    eXtreme Federated Learning (XFL) strategy
+    Clients send only one layer per round, selected cyclically
+    """
+
+    def __init__(self, xfl_variant: str = "cyclic", sparsification_threshold: float = 0.01, quantization_bits: int = 8):
+        """
+        Args:
+            xfl_variant: XFL variant ("cyclic", "sparsification", "quantization")
+            sparsification_threshold: Threshold for sparsification (if variant == "sparsification")
+            quantization_bits: Number of bits for quantization (if variant == "quantization")
+        """
+        super().__init__(xfl_strategy="xfl", xfl_param=1)  # XFL sends 1 layer per client
+        self.name = f"XFL-{xfl_variant.capitalize()}"
+        self.xfl_variant = xfl_variant
+        self.sparsification_threshold = sparsification_threshold
+        self.quantization_bits = quantization_bits
+
+        print(f"✅ {self.name} initialized")
+        if xfl_variant == "sparsification":
+            print(f"   Sparsification threshold: {sparsification_threshold}")
+        elif xfl_variant == "quantization":
+            print(f"   Quantization bits: {quantization_bits}")
+
+    def aggregate(
+        self,
+        client_weights: List[OrderedDict],
+        client_num_samples: List[int]
+    ) -> OrderedDict:
+        """
+        Aggregate partial client weights (one layer per client) using XFL
+
+        Args:
+            client_weights: List of partial model weights from each client (one layer each)
+            client_num_samples: List of number of samples per client
+
+        Returns:
+            Aggregated global model weights (only updated layers)
+        """
+        if len(client_weights) == 0:
+            raise ValueError("No client weights to aggregate")
+
+        if len(client_weights) != len(client_num_samples):
+            raise ValueError("Number of client weights must match number of sample counts")
+
+        # For XFL, each client sends exactly one layer
+        # We need to aggregate per layer, weighted by samples
+        layer_updates = {}  # layer_name -> list of (weight, num_samples)
+
+        for client_weight, num_samples in zip(client_weights, client_num_samples):
+            for layer_name, layer_weight in client_weight.items():
+                if layer_name not in layer_updates:
+                    layer_updates[layer_name] = []
+                layer_updates[layer_name].append((layer_weight, num_samples))
+
+        print(f"📊 Aggregating {len(client_weights)} clients with XFL-{self.xfl_variant}")
+        print(f"   Layers received: {len(layer_updates)}")
+
+        # Aggregate each layer
+        aggregated_weights = OrderedDict()
+        for layer_name, updates in layer_updates.items():
+            total_samples = sum(num_samples for _, num_samples in updates)
+            aggregated_layer = torch.zeros_like(updates[0][0])
+
+            for layer_weight, num_samples in updates:
+                weight_factor = num_samples / total_samples
+                aggregated_layer += layer_weight * weight_factor
+
+            aggregated_weights[layer_name] = aggregated_layer
+
+        return aggregated_weights
+
+    def get_xfl_info(self) -> Dict:
+        """
+        Get current XFL configuration
+
+        Returns:
+            Dictionary with XFL info
+        """
+        info = {
+            "strategy": f"xfl_{self.xfl_variant}",
+            "param": 1,  # Always 1 layer per client
+            "name": self.name,
+            "variant": self.xfl_variant
+        }
+        if self.xfl_variant == "sparsification":
+            info["sparsification_threshold"] = self.sparsification_threshold
+        elif self.xfl_variant == "quantization":
+            info["quantization_bits"] = self.quantization_bits
+        return info
 
 
 def create_aggregation_strategy(
@@ -170,32 +263,43 @@ def create_aggregation_strategy(
 ) -> FedAvg:
     """
     Factory function to create aggregation strategies with XFL
-    
+
     Args:
-        strategy_name: Name of the strategy ('fedavg', 'fedprox')
+        strategy_name: Name of the strategy ('fedavg', 'fedprox', 'xfl')
         xfl_strategy: XFL strategy type
         xfl_param: XFL parameter
-        
+
     Returns:
         Aggregation strategy instance
     """
     strategies = {
         "fedavg": FedAvg,
-        "fedprox": FedProx
+        "fedprox": FedProx,
+        "xfl": XFL
     }
-    
+
     strategy_name_lower = strategy_name.lower()
-    
+
     if strategy_name_lower not in strategies:
         raise ValueError(f"Unknown strategy: {strategy_name}. Available: {list(strategies.keys())}")
-    
-    strategy = strategies[strategy_name_lower](
-        xfl_strategy=xfl_strategy,
-        xfl_param=xfl_param
-    )
-    
+
+    # For XFL, extract variant from xfl_strategy
+    if strategy_name_lower == "xfl":
+        # xfl_strategy should be like "xfl_cyclic", "xfl_sparsification", etc.
+        if xfl_strategy.startswith("xfl_"):
+            variant = xfl_strategy[4:]  # Remove "xfl_" prefix
+            strategy = XFL(variant)
+        else:
+            # Default to cyclic if not specified
+            strategy = XFL("cyclic")
+    else:
+        strategy = strategies[strategy_name_lower](
+            xfl_strategy=xfl_strategy,
+            xfl_param=xfl_param
+        )
+
     print(f"✅ Aggregation strategy '{strategy.name}' created with XFL: {xfl_strategy}")
-    
+
     return strategy
 
 

@@ -12,7 +12,7 @@ from typing import Dict, List, Any
 import time
 import threading
 
-from .strategy import create_aggregation_strategy
+from .strategy import create_aggregation_strategy, XFL
 from .metrics import ServerMetricsCollector
 
 
@@ -56,7 +56,7 @@ class FLServer:
         # State management
         self.current_round = 0
         self.round_in_progress = False
-        self.client_submissions = []
+        self.client_submissions = {}  # client_id -> submission dict
         self.lock = threading.Lock()
         
         # Test metrics
@@ -86,7 +86,7 @@ class FLServer:
             
             self.current_round += 1
             self.round_in_progress = True
-            self.client_submissions = []
+            self.client_submissions = []  # Reset submissions list
             
             # Get XFL info for logging
             xfl_info = self.aggregation_strategy.get_xfl_info()
@@ -147,43 +147,60 @@ class FLServer:
         """Aggregate client updates using XFL strategy"""
         xfl_info = self.aggregation_strategy.get_xfl_info()
         print(f"\n📊 Aggregating {len(self.client_submissions)} clients with XFL: {xfl_info['strategy']}")
-        
+
         start_time = time.time()
-        
-        # Extract weights and sample counts
-        client_weights = [sub["weights"] for sub in self.client_submissions]
-        client_num_samples = [sub["num_samples"] for sub in self.client_submissions]
-        
-        # Aggregate with XFL
-        aggregated_weights = self.aggregation_strategy.aggregate(
-            client_weights,
-            client_num_samples
-        )
-        
-        # Update global model
-        self.global_model.load_state_dict(aggregated_weights)
-        
-        aggregation_time = time.time() - start_time
-        
-        # Evaluate global model
-        test_loss, test_accuracy = None, None
-        if self.test_loader is not None:
-            test_loss, test_accuracy = self._evaluate_global_model()
-        
-        # Store round metrics
-        self.metrics_collector.store_round_metrics(
-            round_number=self.current_round,
-            num_clients=len(self.client_submissions),
-            aggregation_time=aggregation_time,
-            global_test_loss=test_loss,
-            global_test_accuracy=test_accuracy,
-            total_samples=sum(client_num_samples)
-        )
-        
-        print(f"✅ Round {self.current_round} completed in {aggregation_time:.2f}s")
-        if test_accuracy is not None:
-            print(f"   Global Test Accuracy: {test_accuracy:.2f}%")
-        
+
+        try:
+            # Extract weights and sample counts
+            client_weights = [sub["weights"] for sub in self.client_submissions]
+            client_num_samples = [sub["num_samples"] for sub in self.client_submissions]
+
+            # Aggregate with XFL
+            aggregated_weights = self.aggregation_strategy.aggregate(
+                client_weights,
+                client_num_samples
+            )
+
+            # Update global model
+            if isinstance(self.aggregation_strategy, XFL):
+                # For XFL, aggregated_weights contains only updated layers
+                current_state = self.global_model.state_dict()
+                current_state.update(aggregated_weights)
+                self.global_model.load_state_dict(current_state)
+            else:
+                # For FedAvg variants, aggregated_weights contains all layers
+                self.global_model.load_state_dict(aggregated_weights)
+
+            aggregation_time = time.time() - start_time
+
+            # Evaluate global model
+            test_loss, test_accuracy = None, None
+            if self.test_loader is not None:
+                try:
+                    test_loss, test_accuracy = self._evaluate_global_model()
+                except Exception as e:
+                    print(f"⚠️  Global model evaluation failed: {e}")
+                    test_loss, test_accuracy = None, None
+
+            # Store round metrics
+            self.metrics_collector.store_round_metrics(
+                round_number=self.current_round,
+                num_clients=len(self.client_submissions),
+                aggregation_time=aggregation_time,
+                global_test_loss=test_loss,
+                global_test_accuracy=test_accuracy,
+                total_samples=sum(client_num_samples)
+            )
+
+            print(f"✅ Round {self.current_round} completed in {aggregation_time:.2f}s")
+            if test_accuracy is not None:
+                print(f"   Global Test Accuracy: {test_accuracy:.2f}%")
+
+        except Exception as e:
+            aggregation_time = time.time() - start_time
+            print(f"❌ Aggregation failed for round {self.current_round}: {e}")
+            print(f"   Round will be completed anyway to prevent blocking")
+
         # Reset round state
         self.round_in_progress = False
     
@@ -236,11 +253,11 @@ class FLServer:
     def set_xfl_strategy(self, strategy: str, param: int = 3) -> Dict[str, Any]:
         """
         Change XFL strategy dynamically
-        
+
         Args:
             strategy: New XFL strategy
             param: New XFL parameter
-            
+
         Returns:
             Status dictionary
         """
@@ -250,9 +267,14 @@ class FLServer:
                     "status": "error",
                     "message": "Cannot change strategy during active round"
                 }
-            
-            self.aggregation_strategy.set_xfl_strategy(strategy, param)
-            
+
+            if strategy.startswith("xfl"):
+                # For XFL strategies, create new XFL aggregation strategy
+                self.aggregation_strategy = create_aggregation_strategy("xfl", strategy, param)
+            else:
+                # For FedAvg variants, update the existing strategy
+                self.aggregation_strategy.set_xfl_strategy(strategy, param)
+
             return {
                 "status": "success",
                 "message": f"XFL strategy updated to {strategy}",
@@ -305,13 +327,18 @@ def get_global_model():
     """Get current global model weights"""
     if fl_server is None:
         return jsonify({"error": "Server not initialized"}), 500
-    
+
     weights = fl_server.get_global_model()
     weights_b64 = weights_to_base64(weights)
-    
+
+    # Include XFL info for client to decide on partial updates
+    xfl_info = fl_server.aggregation_strategy.get_xfl_info()
+
     return jsonify({
         "weights": weights_b64,
-        "round": fl_server.current_round
+        "round": fl_server.current_round,
+        "xfl_strategy": xfl_info['strategy'],
+        "xfl_param": xfl_info['param']
     })
 
 
