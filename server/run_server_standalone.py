@@ -39,7 +39,7 @@ def main():
     _, test_loader = create_dataloaders(
         dataset_name="MNIST",
         num_clients=5,  # Doesn't matter for test set
-        batch_size=64,
+        batch_size=256,
         distribution="iid",
         data_dir="/app/data",
         seed=42

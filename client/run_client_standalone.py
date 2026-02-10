@@ -56,11 +56,11 @@ def main():
     start_load = time.time()
     client_loaders, _ = create_dataloaders(
         dataset_name=args.dataset,
-        num_clients=1, 
+        num_clients=args.num_clients,
         batch_size=args.batch_size,
         distribution=args.distribution,
         data_dir="/app/data",
-        seed=42 + args.client_id
+        seed=42
     )
     train_loader = client_loaders[args.client_id]
     print(f"Client {args.client_id}: Data loaded in {time.time()-start_load:.1f}s")

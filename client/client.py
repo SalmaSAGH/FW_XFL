@@ -64,11 +64,11 @@ class FLClient:
     
     def participate_in_round(self, verbose: bool = False) -> bool:
         """
-        Participate in one FL round - SPEED OPTIMIZED
-        
+        Participate in one FL round - SPEED OPTIMIZED with XFL support
+
         Args:
             verbose: Print progress messages
-            
+
         Returns:
             True if successful, False otherwise
         """
@@ -80,17 +80,20 @@ class FLClient:
             )
             if response.status_code != 200:
                 return False
-            
+
             data = response.json()
             weights = self._base64_to_weights(data['weights'])
             current_round = data['round']
-            
+            xfl_strategy = data.get('xfl_strategy', 'all_layers')
+            xfl_param = data.get('xfl_param', 3)
+
             if verbose:
                 print(f"Client {self.client_id}: Round {current_round} - Model downloaded")
-            
+                print(f"   XFL Strategy: {xfl_strategy}")
+
             # Step 2: Update local model
             self.trainer.set_model_weights(weights)
-            
+
             # Step 3: Train locally (THIS IS THE SLOW PART)
             start_train = time.time()
             training_metrics = self.trainer.train(
@@ -99,60 +102,115 @@ class FLClient:
                 verbose=False  # Disable verbose to save time
             )
             train_time = time.time() - start_train
-            
+
             if verbose:
                 print(f"Client {self.client_id}: Training done in {train_time:.1f}s "
                       f"(Loss: {training_metrics['loss']:.4f}, "
                       f"Acc: {training_metrics['accuracy']:.1f}%)")
-            
+
             # Step 4: Get trained weights
             trained_weights = self.trainer.get_model_weights()
             num_samples = len(self.train_loader.dataset)
-            
-            # Step 5: Collect minimal metrics (don't waste time)
-            model_size_bytes = sum(p.numel() * p.element_size() for p in trained_weights.values())
-            
+
+            # Step 5: Apply XFL strategy - select layers to send
+            weights_to_send = self._apply_xfl_strategy(
+                trained_weights, xfl_strategy, xfl_param, current_round, verbose
+            )
+
+            # Step 6: Collect minimal metrics (don't waste time)
+            model_size_bytes = sum(p.numel() * p.element_size() for p in weights_to_send.values())
+
             full_metrics = self.metrics_collector.collect_full_metrics(
                 training_metrics=training_metrics,
-                model_weights=trained_weights,
+                model_weights=weights_to_send,  # Use sent weights for metrics
                 network_metrics={
                     "bytes_sent": model_size_bytes,
                     "bytes_received": model_size_bytes,
                     "transmission_time": 0
                 }
             )
-            
-            # Step 6: Send update to server
+
+            # Step 7: Send update to server
             start_upload = time.time()
-            weights_b64 = self._weights_to_base64(trained_weights)
-            
+            weights_b64 = self._weights_to_base64(weights_to_send)
+
             payload = {
                 "client_id": self.client_id,
                 "weights": weights_b64,
                 "num_samples": num_samples,
                 "metrics": full_metrics
             }
-            
+
             response = requests.post(
                 f"{self.server_url}/submit_update",
                 json=payload,
                 timeout=30
             )
-            
+
             upload_time = time.time() - start_upload
-            
+
             if response.status_code != 200:
                 return False
-            
+
             result = response.json()
-            
+
             if verbose:
                 print(f"Client {self.client_id}: Upload done in {upload_time:.1f}s "
                       f"({result.get('submissions')}/{result.get('submissions')} received)")
-            
+
             return True
-        
+
         except Exception as e:
             if verbose:
                 print(f"Client {self.client_id}: Error - {e}")
             return False
+
+    def _apply_xfl_strategy(
+        self,
+        trained_weights: OrderedDict,
+        xfl_strategy: str,
+        xfl_param: int,
+        current_round: int,
+        verbose: bool = False
+    ) -> OrderedDict:
+        """
+        Apply XFL strategy to select which layers to send
+
+        Args:
+            trained_weights: Full trained model weights
+            xfl_strategy: XFL strategy type
+            xfl_param: XFL parameter
+            current_round: Current round number
+            verbose: Print selection info
+
+        Returns:
+            Selected weights to send
+        """
+        all_layer_names = list(trained_weights.keys())
+
+        if xfl_strategy == "all_layers":
+            return trained_weights
+
+        elif xfl_strategy in ["first_n_layers", "last_n_layers", "random_layers"]:
+            # For FedAvg variants, send full weights (server handles selection)
+            return trained_weights
+
+        elif xfl_strategy.startswith("xfl"):
+            # For XFL, send only one layer per client (cyclic selection)
+            num_layers = len(all_layer_names)
+            layer_index = (self.client_id + current_round - 1) % num_layers
+            selected_layer = all_layer_names[layer_index]
+
+            selected_weights = OrderedDict()
+            selected_weights[selected_layer] = trained_weights[selected_layer]
+
+            if verbose:
+                print(f"   📌 XFL: Sending layer {layer_index} ({selected_layer})")
+
+            return selected_weights
+
+        else:
+            # Default: send all layers
+            if verbose:
+                print(f"   ⚠️ Unknown XFL strategy: {xfl_strategy}, sending all layers")
+            return trained_weights
