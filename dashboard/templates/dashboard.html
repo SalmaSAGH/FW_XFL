@@ -495,8 +495,10 @@
                     <option value="xfl_quantization">XFL - Quantization</option>
                 </select>
 
-                <input type="number" class="param-input" id="xfl-param-input"
-                       min="1" max="10" value="1" placeholder="N (for FedAvg) or threshold (for XFL)">
+                <div class="info-card" id="rounds-needed-card" style="display: none;">
+                    <div class="info-label">Rounds to cover all layers</div>
+                    <div class="info-value" id="rounds-needed">-</div>
+                </div>
 
                 <button class="btn btn-warning" onclick="applyXflStrategy()">
                     🔄 APPLY XFL STRATEGY
@@ -698,7 +700,7 @@
         // *** NEW: Apply XFL Strategy ***
         async function applyXflStrategy() {
             const strategy = document.getElementById('strategy-select').value;
-            const param = parseInt(document.getElementById('xfl-param-input').value) || 2;
+            const param = 1; // Default param for XFL strategies
 
             // Check if round is in progress
             if (currentRoundInProgress) {
@@ -716,7 +718,7 @@
                 const data = await response.json();
 
                 if (data.status === 'success') {
-                    alert(`✅ XFL Strategy updated to: ${strategy} (N=${param})`);
+                    alert(`✅ XFL Strategy updated to: ${strategy}`);
                     // Update display
                     updateXflDisplay(strategy, param);
                 } else {
@@ -739,6 +741,22 @@
             document.getElementById('xfl-current').textContent = strategyNames[strategy] || strategy;
         }
 
+        // Update rounds needed display for XFL cyclic
+        function updateRoundsNeededDisplay(status) {
+            const roundsNeededCard = document.getElementById('rounds-needed-card');
+            const roundsNeededValue = document.getElementById('rounds-needed');
+
+            if (status.xfl_strategy === 'xfl_cyclic' && status.num_layers) {
+                // For XFL cyclic, each client sends one layer per round
+                // To cover all layers, we need num_layers rounds
+                const roundsNeeded = status.num_layers;
+                roundsNeededValue.textContent = roundsNeeded;
+                roundsNeededCard.style.display = 'block';
+            } else {
+                roundsNeededCard.style.display = 'none';
+            }
+        }
+
         // Update dashboard
         async function updateDashboard() {
             try {
@@ -755,6 +773,9 @@
                 if (status.xfl_strategy) {
                     updateXflDisplay(status.xfl_strategy, status.xfl_param || 2);
                 }
+
+                // Update rounds needed display for XFL cyclic
+                updateRoundsNeededDisplay(status);
 
                 // Track round progress
                 currentRoundInProgress = status.round_in_progress;

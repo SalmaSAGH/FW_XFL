@@ -196,16 +196,21 @@ class FLClient:
             return trained_weights
 
         elif xfl_strategy.startswith("xfl"):
-            # For XFL, send only one layer per client (cyclic selection)
-            num_layers = len(all_layer_names)
+            # For XFL, send all parameters of one layer per client (cyclic selection)
+            # Group parameters by layer prefix (e.g., conv1, conv2, fc1, fc2)
+            layer_prefixes = sorted(set(name.split('.')[0] for name in all_layer_names))
+            num_layers = len(layer_prefixes)
             layer_index = (self.client_id + current_round - 1) % num_layers
-            selected_layer = all_layer_names[layer_index]
+            selected_prefix = layer_prefixes[layer_index]
 
+            # Select all parameters that belong to this layer
             selected_weights = OrderedDict()
-            selected_weights[selected_layer] = trained_weights[selected_layer]
+            for param_name in all_layer_names:
+                if param_name.startswith(selected_prefix + '.'):
+                    selected_weights[param_name] = trained_weights[param_name]
 
             if verbose:
-                print(f"   📌 XFL: Sending layer {layer_index} ({selected_layer})")
+                print(f"   📌 XFL: Sending layer {layer_index} ({selected_prefix}) - {len(selected_weights)} parameters")
 
             return selected_weights
 
