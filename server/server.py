@@ -12,7 +12,7 @@ from typing import Dict, List, Any
 import time
 import threading
 
-from .strategy import create_aggregation_strategy, XFL
+from .strategy import create_aggregation_strategy, XFL, FedAvg
 from .metrics import ServerMetricsCollector
 
 
@@ -240,6 +240,9 @@ class FLServer:
         """Get current server status with XFL info"""
         with self.lock:
             xfl_info = self.aggregation_strategy.get_xfl_info()
+            # Count logical layers (unique prefixes) instead of total parameters
+            layer_names = list(self.global_model.state_dict().keys())
+            num_layers = len(set(name.split('.')[0] for name in layer_names))
             return {
                 "current_round": self.current_round,
                 "total_rounds": self.num_rounds,
@@ -247,7 +250,8 @@ class FLServer:
                 "submissions_received": len(self.client_submissions),
                 "clients_expected": self.clients_per_round,
                 "xfl_strategy": xfl_info['strategy'],
-                "xfl_param": xfl_info['param']
+                "xfl_param": xfl_info['param'],
+                "num_layers": num_layers
             }
     
     def set_xfl_strategy(self, strategy: str, param: int = 3) -> Dict[str, Any]:
@@ -272,8 +276,8 @@ class FLServer:
                 # For XFL strategies, create new XFL aggregation strategy
                 self.aggregation_strategy = create_aggregation_strategy("xfl", strategy, param)
             else:
-                # For FedAvg variants, update the existing strategy
-                self.aggregation_strategy.set_xfl_strategy(strategy, param)
+                # For non-XFL strategies (like all_layers), create new FedAvg strategy
+                self.aggregation_strategy = FedAvg(xfl_strategy=strategy, xfl_param=param)
 
             return {
                 "status": "success",

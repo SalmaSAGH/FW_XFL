@@ -85,10 +85,12 @@ class DashboardServer:
                     server_current_round = server_status.get('current_round', 0)
                     xfl_strategy = server_status.get('xfl_strategy', 'all_layers')
                     xfl_param = server_status.get('xfl_param', 3)
-                    
+                    num_layers = server_status.get('num_layers', 0)
+
                     if server_current_round > 0:
                         current_round = server_current_round
                 except:
+                    num_layers = 0
                     pass
                 
                 conn.close()
@@ -103,7 +105,8 @@ class DashboardServer:
                     "clients_expected": expected_clients,
                     "submissions_received": submissions_received,
                     "xfl_strategy": xfl_strategy,
-                    "xfl_param": xfl_param
+                    "xfl_param": xfl_param,
+                    "num_layers": num_layers
                 })
             
             except Exception as e:
