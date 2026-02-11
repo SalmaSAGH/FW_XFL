@@ -247,12 +247,10 @@ class XFL(FedAvg):
             "strategy": f"xfl_{self.xfl_variant}",
             "param": 1,  # Always 1 layer per client
             "name": self.name,
-            "variant": self.xfl_variant
+            "variant": self.xfl_variant,
+            "sparsification_threshold": self.sparsification_threshold,
+            "quantization_bits": self.quantization_bits
         }
-        if self.xfl_variant == "sparsification":
-            info["sparsification_threshold"] = self.sparsification_threshold
-        elif self.xfl_variant == "quantization":
-            info["quantization_bits"] = self.quantization_bits
         return info
 
 

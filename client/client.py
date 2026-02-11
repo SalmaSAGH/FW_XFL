@@ -8,7 +8,7 @@ import pickle
 import base64
 from collections import OrderedDict
 import time
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 import torch
 
 from .trainer import LocalTrainer
@@ -29,7 +29,9 @@ class FLClient:
         momentum: float = 0.9,
         weight_decay: float = 0.0001,
         local_epochs: int = 1,
-        timeout: int = 300
+        timeout: int = 300,
+        sparsification_threshold: float = 0.01,
+        quantization_bits: int = 8
     ):
         self.client_id = client_id
         self.model = model
@@ -37,7 +39,11 @@ class FLClient:
         self.server_url = server_url
         self.local_epochs = local_epochs
         self.timeout = timeout
-        
+
+        # XFL compression parameters
+        self.sparsification_threshold = sparsification_threshold
+        self.quantization_bits = quantization_bits
+
         # Initialize trainer
         self.trainer = LocalTrainer(
             model=model,
@@ -46,10 +52,10 @@ class FLClient:
             momentum=momentum,
             weight_decay=weight_decay
         )
-        
+
         # Initialize metrics collector
         self.metrics_collector = MetricsCollector(client_id=client_id)
-        
+
         print(f"✅ FLClient {client_id} initialized ({len(train_loader.dataset)} samples)")
     
     def _weights_to_base64(self, weights: OrderedDict) -> str:
@@ -141,6 +147,12 @@ class FLClient:
                 "metrics": full_metrics
             }
 
+            # Include quantization metadata if quantization was applied
+            if hasattr(self, '_quantization_meta') and self._quantization_meta:
+                payload["quantization_meta"] = self._quantization_meta
+                # Clear the metadata after sending
+                delattr(self, '_quantization_meta')
+
             response = requests.post(
                 f"{self.server_url}/submit_update",
                 json=payload,
@@ -164,6 +176,73 @@ class FLClient:
             if verbose:
                 print(f"Client {self.client_id}: Error - {e}")
             return False
+
+    def _apply_sparsification(self, weights: OrderedDict, threshold: float) -> OrderedDict:
+        """
+        Apply sparsification to weights by setting small values to zero
+
+        Args:
+            weights: Weights to sparsify
+            threshold: Threshold below which to set to zero
+
+        Returns:
+            Sparsified weights
+        """
+        sparsified = OrderedDict()
+        for name, param in weights.items():
+            sparsified[name] = torch.where(torch.abs(param) < threshold, torch.zeros_like(param), param)
+        return sparsified
+
+    def _apply_quantization(self, weights: OrderedDict, bits: int) -> Tuple[OrderedDict, Dict[str, Dict]]:
+        """
+        Apply quantization to reduce weight precision with metadata for dequantization
+
+        Args:
+            weights: Weights to quantize
+            bits: Number of bits for quantization
+
+        Returns:
+            Tuple of (quantized weights, quantization metadata)
+        """
+        quantized = OrderedDict()
+        quantization_meta = {}
+
+        for name, param in weights.items():
+            # Calculate quantization parameters
+            min_val = param.min().item()
+            max_val = param.max().item()
+
+            if max_val == min_val:
+                # No quantization needed for constant tensors
+                quantized[name] = param
+                quantization_meta[name] = {
+                    'quantized': False,
+                    'min_val': min_val,
+                    'max_val': max_val,
+                    'scale': 1.0,
+                    'zero_point': 0
+                }
+                continue
+
+            # Symmetric quantization around zero for better accuracy
+            abs_max = max(abs(min_val), abs(max_val))
+            scale = (2 * abs_max) / (2**bits - 1)
+            zero_point = 0
+
+            # Quantize: map to integers and keep as integers for bandwidth saving
+            quantized_int = torch.round(param / scale).clamp(-(2**(bits-1)), 2**(bits-1) - 1).to(torch.int32)
+            quantized[name] = quantized_int
+
+            quantization_meta[name] = {
+                'quantized': True,
+                'min_val': min_val,
+                'max_val': max_val,
+                'scale': scale,
+                'zero_point': zero_point,
+                'bits': bits
+            }
+
+        return quantized, quantization_meta
 
     def _apply_xfl_strategy(
         self,
@@ -211,6 +290,18 @@ class FLClient:
 
             if verbose:
                 print(f"   📌 XFL: Sending layer {layer_index} ({selected_prefix}) - {len(selected_weights)} parameters")
+
+            # Apply compression based on variant
+            if xfl_strategy == "xfl_sparsification":
+                selected_weights = self._apply_sparsification(selected_weights, self.sparsification_threshold)
+                if verbose:
+                    print(f"   🗜️ Applied sparsification with threshold {self.sparsification_threshold}")
+            elif xfl_strategy == "xfl_quantization":
+                selected_weights, quantization_meta = self._apply_quantization(selected_weights, self.quantization_bits)
+                # Store quantization metadata for sending to server
+                self._quantization_meta = quantization_meta
+                if verbose:
+                    print(f"   🗜️ Applied quantization to {self.quantization_bits} bits")
 
             return selected_weights
 
