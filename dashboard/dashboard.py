@@ -16,7 +16,7 @@ class DashboardServer:
     """
     Real-time dashboard server for FL monitoring with XFL
     """
-    
+
     def __init__(self, db_path: str = "logs/server_metrics.db", port: int = 5001):
         """
         Args:
@@ -25,14 +25,19 @@ class DashboardServer:
         """
         self.db_path = db_path
         self.port = port
-        self.app = Flask(__name__, 
+        self.app = Flask(__name__,
                         template_folder=str(Path(__file__).parent / 'templates'),
                         static_folder=str(Path(__file__).parent / 'static'))
         CORS(self.app)
-        
+
+        # Caching for performance
+        self._server_status_cache = None
+        self._cache_timestamp = 0
+        self._cache_timeout = 2  # Cache server status for 2 seconds
+
         # Setup routes
         self._setup_routes()
-        
+
         print(f"✅ Dashboard server initialized on port {port}")
         print(f"   XFL strategy control enabled")
     
@@ -49,20 +54,20 @@ class DashboardServer:
             """Get current experiment status with XFL info"""
             try:
                 expected_clients = int(os.getenv('NUM_CLIENTS', '5'))
-                
+
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
-                
+
                 cursor.execute("SELECT MAX(round_number) FROM round_metrics")
                 max_completed_round = cursor.fetchone()[0] or 0
-                
+
                 cursor.execute("""
-                    SELECT COUNT(DISTINCT client_id) 
+                    SELECT COUNT(DISTINCT client_id)
                     FROM client_metrics
                     WHERE round_number = ?
                 """, (max_completed_round,))
                 active_clients_last_round = cursor.fetchone()[0] or 0
-                
+
                 cursor.execute("""
                     SELECT round_number, global_test_accuracy, global_test_loss
                     FROM round_metrics
@@ -70,16 +75,28 @@ class DashboardServer:
                     LIMIT 1
                 """)
                 latest = cursor.fetchone()
-                
+
+                # Use cached server status if available and not expired
+                current_time = time.time()
+                if self._server_status_cache and (current_time - self._cache_timestamp) < self._cache_timeout:
+                    server_status = self._server_status_cache
+                else:
+                    try:
+                        import requests
+                        server_status = requests.get('http://server:5000/status', timeout=1).json()
+                        self._server_status_cache = server_status
+                        self._cache_timestamp = current_time
+                    except:
+                        server_status = None
+
                 round_in_progress = False
                 submissions_received = 0
                 current_round = max_completed_round
                 xfl_strategy = "all_layers"
                 xfl_param = 3
-                
-                try:
-                    import requests
-                    server_status = requests.get('http://server:5000/status', timeout=1).json()
+                num_layers = 0
+
+                if server_status:
                     round_in_progress = server_status.get('round_in_progress', False)
                     submissions_received = server_status.get('submissions_received', 0)
                     server_current_round = server_status.get('current_round', 0)
@@ -89,12 +106,9 @@ class DashboardServer:
 
                     if server_current_round > 0:
                         current_round = server_current_round
-                except:
-                    num_layers = 0
-                    pass
-                
+
                 conn.close()
-                
+
                 return jsonify({
                     "current_round": current_round,
                     "total_rounds": max_completed_round,
@@ -108,7 +122,7 @@ class DashboardServer:
                     "xfl_param": xfl_param,
                     "num_layers": num_layers
                 })
-            
+
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
         
@@ -171,12 +185,12 @@ class DashboardServer:
             """Get client metrics"""
             try:
                 expected_clients = int(os.getenv('NUM_CLIENTS', '5'))
-                
+
                 conn = sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
-                
+
                 cursor.execute("""
-                    SELECT client_id, 
+                    SELECT client_id,
                            AVG(training_accuracy) as avg_accuracy,
                            AVG(training_time_sec) as avg_time,
                            AVG(cpu_percent) as avg_cpu,
@@ -187,55 +201,53 @@ class DashboardServer:
                     GROUP BY client_id
                     ORDER BY client_id
                 """)
-                
+
                 data = cursor.fetchall()
                 client_data_map = {row[0]: row for row in data}
-                
+
                 cursor.execute("SELECT MAX(round_number) FROM round_metrics")
                 last_completed_round = cursor.fetchone()[0] or 0
-                
+
                 current_round = last_completed_round
                 training_client_ids = set()
-                
-                try:
-                    import requests
-                    server_status = requests.get('http://server:5000/status', timeout=1).json()
+
+                # Use cached server status if available
+                if self._server_status_cache:
+                    server_status = self._server_status_cache
                     if server_status.get('round_in_progress', False):
                         current_round = server_status.get('current_round', last_completed_round)
-                        
+
                         cursor.execute("""
                             SELECT DISTINCT client_id
                             FROM client_metrics
                             WHERE round_number = ?
                         """, (current_round,))
                         submitted_clients = set(row[0] for row in cursor.fetchall())
-                        
+
                         all_expected = set(range(expected_clients))
                         training_client_ids = all_expected - submitted_clients
-                except:
-                    pass
-                
+
                 cursor.execute("""
                     SELECT DISTINCT client_id
                     FROM client_metrics
                     WHERE round_number = ?
                 """, (last_completed_round,))
                 active_in_last_round = set(row[0] for row in cursor.fetchall())
-                
+
                 conn.close()
-                
+
                 clients = []
                 for client_id in range(expected_clients):
                     if client_id in client_data_map:
                         row = client_data_map[client_id]
-                        
+
                         if client_id in training_client_ids:
                             state = "training"
                         elif client_id in active_in_last_round:
                             state = "active"
                         else:
                             state = "idle"
-                        
+
                         clients.append({
                             "client_id": client_id,
                             "avg_accuracy": round(row[1], 2) if row[1] else 0,
@@ -256,9 +268,9 @@ class DashboardServer:
                             "num_rounds": 0,
                             "state": state
                         })
-                
+
                 return jsonify({"clients": clients})
-            
+
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
         

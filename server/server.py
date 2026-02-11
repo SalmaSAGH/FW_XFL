@@ -105,7 +105,8 @@ class FLServer:
         client_id: int,
         model_weights: OrderedDict,
         num_samples: int,
-        client_metrics: Dict[str, Any]
+        client_metrics: Dict[str, Any],
+        quantization_meta: Dict[str, Dict] = None
     ) -> Dict[str, Any]:
         """Receive model update from a client"""
         with self.lock:
@@ -120,7 +121,8 @@ class FLServer:
                 "client_id": client_id,
                 "weights": model_weights,
                 "num_samples": num_samples,
-                "metrics": client_metrics
+                "metrics": client_metrics,
+                "quantization_meta": quantization_meta
             })
             
             # Store client metrics in database
@@ -154,6 +156,14 @@ class FLServer:
             # Extract weights and sample counts
             client_weights = [sub["weights"] for sub in self.client_submissions]
             client_num_samples = [sub["num_samples"] for sub in self.client_submissions]
+
+            # Check if any quantization metadata is present (for XFL quantization)
+            has_quantization = any(sub.get("quantization_meta") for sub in self.client_submissions)
+
+            if has_quantization and xfl_info['variant'] == 'quantization':
+                print("   🔧 Applying dequantization before aggregation...")
+                # Dequantize weights before aggregation
+                client_weights = self._dequantize_client_weights(client_weights)
 
             # Aggregate with XFL
             aggregated_weights = self.aggregation_strategy.aggregate(
@@ -230,7 +240,45 @@ class FLServer:
         accuracy = 100. * correct / total
         
         return avg_loss, accuracy
-    
+
+    def _dequantize_client_weights(self, client_weights: List[OrderedDict]) -> List[OrderedDict]:
+        """
+        Dequantize client weights before aggregation for XFL quantization
+
+        Args:
+            client_weights: List of quantized client weights (integers)
+
+        Returns:
+            List of dequantized client weights (floats)
+        """
+        dequantized_weights = []
+
+        for i, client_weight in enumerate(client_weights):
+            # Find the corresponding submission with quantization metadata
+            client_meta = self.client_submissions[i].get("quantization_meta")
+
+            if client_meta is None:
+                # No quantization metadata, assume already dequantized
+                dequantized_weights.append(client_weight)
+                continue
+
+            # Dequantize each parameter
+            dequantized = OrderedDict()
+            for param_name, param in client_weight.items():
+                if param_name in client_meta and client_meta[param_name]['quantized']:
+                    # This parameter was quantized, dequantize it
+                    meta = client_meta[param_name]
+                    # Convert integers back to float using scale
+                    dequantized_param = param.float() * meta['scale']
+                    dequantized[param_name] = dequantized_param
+                else:
+                    # Not quantized, keep as is
+                    dequantized[param_name] = param.float()
+
+            dequantized_weights.append(dequantized)
+
+        return dequantized_weights
+
     def get_global_model(self) -> OrderedDict:
         """Get current global model weights"""
         with self.lock:
@@ -342,7 +390,9 @@ def get_global_model():
         "weights": weights_b64,
         "round": fl_server.current_round,
         "xfl_strategy": xfl_info['strategy'],
-        "xfl_param": xfl_info['param']
+        "xfl_param": xfl_info['param'],
+        "sparsification_threshold": xfl_info.get('sparsification_threshold', 0.01),
+        "quantization_bits": xfl_info.get('quantization_bits', 8)
     })
 
 
@@ -353,26 +403,28 @@ def submit_update():
         return jsonify({"error": "Server not initialized"}), 500
     
     data = request.get_json()
-    
+
     # Extract data
     client_id = data.get('client_id')
     weights_b64 = data.get('weights')
     num_samples = data.get('num_samples')
     client_metrics = data.get('metrics', {})
-    
+    quantization_meta = data.get('quantization_meta')
+
     # Validate
     if client_id is None or weights_b64 is None or num_samples is None:
         return jsonify({"error": "Missing required fields"}), 400
-    
+
     # Deserialize weights
     weights = base64_to_weights(weights_b64)
-    
+
     # Submit to server
     result = fl_server.submit_client_update(
         client_id=client_id,
         model_weights=weights,
         num_samples=num_samples,
-        client_metrics=client_metrics
+        client_metrics=client_metrics,
+        quantization_meta=quantization_meta
     )
     
     return jsonify(result)
