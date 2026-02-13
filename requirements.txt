@@ -28,6 +28,9 @@ seaborn==0.12.2
 pytest==7.4.3
 pytest-cov==4.1.0
 
+# Database
+psycopg2-binary==2.9.7
+
 # Utilities
 python-dotenv==1.0.0
 tqdm==4.66.1
