@@ -290,6 +290,12 @@
             animation: pulse 2s infinite;
         }
 
+        .pi-card.selected {
+            background: #4fc3f7;
+            border-color: #4fc3f7;
+            animation: pulse 2s infinite;
+        }
+
         .pi-card.error {
             background: #ef5350;
             border-color: #ef5350;
@@ -529,6 +535,10 @@
                     <span>Idle</span>
                 </div>
                 <div class="legend-item">
+                    <div class="legend-color" style="background: #4fc3f7;"></div>
+                    <span>Selected</span>
+                </div>
+                <div class="legend-item">
                     <div class="legend-color" style="background: #ef5350;"></div>
                     <span>Error</span>
                 </div>
@@ -572,6 +582,27 @@
                 <div class="chart-title">📊 Bandwidth Usage (MB)</div>
                 <div class="chart-wrapper">
                     <canvas id="bandwidthChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">⏱️ Network Latency (ms)</div>
+                <div class="chart-wrapper">
+                    <canvas id="latencyChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">⚡ Energy Consumption (Wh)</div>
+                <div class="chart-wrapper">
+                    <canvas id="energyChart"></canvas>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <div class="chart-title">📡 Network Metrics</div>
+                <div class="chart-wrapper" style="height: 180px;">
+                    <canvas id="networkMetricsChart"></canvas>
                 </div>
             </div>
 
@@ -697,6 +728,80 @@
             options: chartConfig
         });
 
+        const latencyChart = new Chart(document.getElementById('latencyChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    data: [],
+                    borderColor: '#ffa726',
+                    backgroundColor: 'rgba(255, 167, 38, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 3
+                }]
+            },
+            options: chartConfig
+        });
+
+        const energyChart = new Chart(document.getElementById('energyChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    data: [],
+                    borderColor: '#66bb6a',
+                    backgroundColor: 'rgba(102, 187, 106, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 3
+                }]
+            },
+            options: chartConfig
+        });
+
+        const networkMetricsChart = new Chart(document.getElementById('networkMetricsChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Packet Loss (%)',
+                    data: [],
+                    borderColor: '#ef5350',
+                    backgroundColor: 'rgba(239, 83, 80, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 3
+                }, {
+                    label: 'Jitter (ms)',
+                    data: [],
+                    borderColor: '#ab47bc',
+                    backgroundColor: 'rgba(171, 71, 188, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { 
+                    legend: { 
+                        display: true,
+                        labels: { color: '#888', font: { size: 9 } }
+                    } 
+                },
+                scales: {
+                    x: { grid: { color: '#2d3348' }, ticks: { color: '#888', font: { size: 9 } } },
+                    y: { grid: { color: '#2d3348' }, ticks: { color: '#888', font: { size: 9 } } }
+                }
+            }
+        });
+
         // *** NEW: Apply XFL Strategy ***
         async function applyXflStrategy() {
             const strategy = document.getElementById('strategy-select').value;
@@ -741,13 +846,13 @@
             document.getElementById('xfl-current').textContent = strategyNames[strategy] || strategy;
         }
 
-        // Update rounds needed display for XFL cyclic
+        // Update rounds needed display for XFL strategies
         function updateRoundsNeededDisplay(status) {
             const roundsNeededCard = document.getElementById('rounds-needed-card');
             const roundsNeededValue = document.getElementById('rounds-needed');
 
-            if (status.xfl_strategy === 'xfl_cyclic' && status.num_layers) {
-                // For XFL cyclic, each client sends one layer per round
+            if (status.xfl_strategy && status.xfl_strategy.startsWith('xfl_') && status.num_layers) {
+                // For XFL strategies, each client sends one layer per round
                 // To cover all layers, we need num_layers rounds
                 const roundsNeeded = status.num_layers;
                 roundsNeededValue.textContent = roundsNeeded;
@@ -760,12 +865,15 @@
         // Update dashboard
         async function updateDashboard() {
             try {
-                const [status, accuracy, loss, clients, bandwidth, history] = await Promise.all([
+                const [status, accuracy, loss, clients, bandwidth, latency, energy, networkMetrics, history] = await Promise.all([
                     fetch('/api/status').then(r => r.json()),
                     fetch('/api/accuracy').then(r => r.json()),
                     fetch('/api/loss').then(r => r.json()),
                     fetch('/api/clients').then(r => r.json()),
                     fetch('/api/bandwidth').then(r => r.json()),
+                    fetch('/api/latency').then(r => r.json()),
+                    fetch('/api/energy').then(r => r.json()),
+                    fetch('/api/network_metrics').then(r => r.json()),
                     fetch('/api/rounds_history').then(r => r.json())
                 ]);
 
@@ -816,6 +924,19 @@
                 bandwidthChart.data.labels = bandwidth.labels || [];
                 bandwidthChart.data.datasets[0].data = bandwidth.values || [];
                 bandwidthChart.update('none');
+
+                latencyChart.data.labels = latency.rounds;
+                latencyChart.data.datasets[0].data = latency.latency;
+                latencyChart.update('none');
+
+                energyChart.data.labels = energy.rounds;
+                energyChart.data.datasets[0].data = energy.energy;
+                energyChart.update('none');
+
+                networkMetricsChart.data.labels = networkMetrics.rounds;
+                networkMetricsChart.data.datasets[0].data = networkMetrics.packet_loss;
+                networkMetricsChart.data.datasets[1].data = networkMetrics.jitter;
+                networkMetricsChart.update('none');
 
                 // Update Pi cards
                 clients.clients.forEach(client => {

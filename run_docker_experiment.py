@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+import psycopg2
 
 
 def run_command(command, shell=True):
@@ -17,6 +18,26 @@ def run_command(command, shell=True):
         print(f"❌ Command failed with exit code {result.returncode}")
         sys.exit(1)
     return result
+
+
+def clear_postgresql_database():
+    """Clear PostgreSQL database tables"""
+    try:
+        conn = psycopg2.connect("postgresql://postgres:newpassword@localhost:5432/xfl_metrics")
+        cursor = conn.cursor()
+
+        cursor.execute("DELETE FROM round_metrics")
+        cursor.execute("DELETE FROM client_metrics")
+
+        conn.commit()
+        conn.close()
+
+        print("✅ PostgreSQL database cleared")
+        return True
+    except Exception as e:
+        print(f"⚠️  Could not clear PostgreSQL database: {e}")
+        print("   Make sure PostgreSQL is running and accessible")
+        return False
 
 
 def main():
@@ -54,18 +75,12 @@ def main():
     print(f"   Server: localhost:5000")
     print(f"   Dashboard: localhost:5001")
     
-    # Ask if user wants to clean old data
-    try:
-        clean = input("\n🧹 Clean old experiment data? (y/n): ").lower()
-        if clean == 'y':
-            db_file = Path("logs/server_metrics.db")
-            if db_file.exists():
-                db_file.unlink()
-                print("✅ Old database deleted")
-            else:
-                print("ℹ️  No old database found")
-    except:
-        pass
+    # Clear PostgreSQL database by default
+    print("\n🧹 Clearing old experiment data...")
+    if clear_postgresql_database():
+        print("✅ PostgreSQL database cleared")
+    else:
+        print("⚠️  Could not clear PostgreSQL database")
     
     # Generate docker-compose.yml
     print("\n" + "="*70)
@@ -87,12 +102,15 @@ def main():
     print("\n" + "="*70)
     print("Step 3: Starting containers")
     print("="*70)
-    
+
+    print("\n💡 Cleaning up old containers...")
+    run_command("docker-compose down --remove-orphans")
+
     print("\n💡 Containers are starting...")
     print("   - Server will be available at: http://localhost:5000")
     print("   - Dashboard will be available at: http://localhost:5001")
     print(f"   - {num_clients} clients will connect automatically")
-    
+
     run_command("docker-compose up -d")
     
     print("\n⏳ Waiting for containers to initialize (10 seconds)...")

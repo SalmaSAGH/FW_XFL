@@ -7,6 +7,7 @@ import time
 import sys
 from typing import Dict, Any
 from collections import OrderedDict
+import random
 
 
 class MetricsCollector:
@@ -14,14 +15,17 @@ class MetricsCollector:
     Collect system and training metrics for FL clients
     """
     
-    def __init__(self, client_id: int):
+    def __init__(self, client_id: int, network_config: Dict[str, Any] = None):
         """
         Args:
             client_id: Unique identifier for this client
+            network_config: Network configuration for latency simulation
         """
         self.client_id = client_id
         self.process = psutil.Process()
         self.start_time = None
+        self.network_config = network_config or {}
+        self.cpu_history = []  # For energy calculation
         
     def start_collection(self):
         """Start metrics collection"""
@@ -126,32 +130,134 @@ class MetricsCollector:
     ) -> Dict[str, Any]:
         """
         Calculate network metrics
-        
+
         Args:
             bytes_sent: Number of bytes sent
             bytes_received: Number of bytes received
             transmission_time: Time taken for transmission
-            
+
         Returns:
             Dictionary with network metrics
         """
         # Convert to MB
         mb_sent = bytes_sent / (1024 * 1024)
         mb_received = bytes_received / (1024 * 1024)
-        
+
         # Calculate throughput (Mbps)
         if transmission_time > 0:
             throughput_mbps = (bytes_sent * 8) / (transmission_time * 1_000_000)
         else:
             throughput_mbps = 0
-        
+
+        # Simulate latency based on network config
+        latency_ms = self.simulate_latency()
+        packet_loss_rate = self.simulate_packet_loss()
+        jitter_ms = self.simulate_jitter()
+
         return {
             "bytes_sent": bytes_sent,
             "bytes_received": bytes_received,
             "mb_sent": round(mb_sent, 4),
             "mb_received": round(mb_received, 4),
             "transmission_time_sec": round(transmission_time, 2),
-            "throughput_mbps": round(throughput_mbps, 2)
+            "throughput_mbps": round(throughput_mbps, 2),
+            "latency_ms": round(latency_ms, 2),
+            "packet_loss_rate": round(packet_loss_rate, 4),
+            "jitter_ms": round(jitter_ms, 2)
+        }
+
+    def simulate_latency(self) -> float:
+        """
+        Simulate network latency based on configuration
+
+        Returns:
+            Latency in milliseconds
+        """
+        if not self.network_config.get('simulate_constraints', False):
+            return 0.0
+
+        base_latency = self.network_config.get('latency_ms', 0)
+        std_dev = self.network_config.get('latency_std_ms', 0)
+
+        # Add random variation
+        latency = random.gauss(base_latency, std_dev)
+        return max(0, latency)  # Ensure non-negative
+
+    def simulate_packet_loss(self) -> float:
+        """
+        Simulate packet loss rate
+
+        Returns:
+            Packet loss rate (0.0 to 1.0)
+        """
+        if not self.network_config.get('simulate_constraints', False):
+            return 0.0
+
+        loss_rate = self.network_config.get('packet_loss_rate', 0.0)
+        # Add some randomness
+        variation = random.uniform(-0.01, 0.01)
+        return max(0.0, min(1.0, loss_rate + variation))
+
+    def simulate_jitter(self) -> float:
+        """
+        Simulate network jitter
+
+        Returns:
+            Jitter in milliseconds
+        """
+        if not self.network_config.get('simulate_constraints', False):
+            return 0.0
+
+        base_jitter = self.network_config.get('jitter_ms', 0.0)
+        # Add random variation
+        jitter = random.gauss(base_jitter, base_jitter * 0.1)
+        return max(0, jitter)
+
+    def estimate_energy_consumption(self, duration_sec: float = None) -> Dict[str, float]:
+        """
+        Estimate energy consumption based on CPU usage history
+
+        Args:
+            duration_sec: Duration to estimate for (uses elapsed time if None)
+
+        Returns:
+            Dictionary with energy metrics
+        """
+        if duration_sec is None:
+            duration_sec = time.time() - self.start_time if self.start_time else 0
+
+        # Get current CPU usage
+        current_cpu = self.process.cpu_percent(interval=0.1)
+        self.cpu_history.append((time.time(), current_cpu))
+
+        # Keep only recent history (last 60 seconds)
+        cutoff_time = time.time() - 60
+        self.cpu_history = [(t, cpu) for t, cpu in self.cpu_history if t > cutoff_time]
+
+        # Calculate average CPU usage
+        if self.cpu_history:
+            avg_cpu = sum(cpu for _, cpu in self.cpu_history) / len(self.cpu_history)
+        else:
+            avg_cpu = current_cpu
+
+        # Estimate power consumption (simplified model)
+        # Base power + CPU-dependent power
+        base_power_watts = 10.0  # Base system power
+        cpu_power_watts = (avg_cpu / 100.0) * 50.0  # Max CPU power draw
+        total_power_watts = base_power_watts + cpu_power_watts
+
+        # Calculate energy consumption (Wh)
+        energy_wh = (total_power_watts * duration_sec) / 3600.0
+
+        # Convert to Joules
+        energy_joules = energy_wh * 3600.0
+
+        return {
+            "energy_joules": round(energy_joules, 2),
+            "energy_wh": round(energy_wh, 4),
+            "avg_power_watts": round(total_power_watts, 2),
+            "avg_cpu_percent": round(avg_cpu, 2),
+            "duration_sec": round(duration_sec, 2)
         }
     
     def collect_full_metrics(
@@ -162,36 +268,39 @@ class MetricsCollector:
     ) -> Dict[str, Any]:
         """
         Collect all metrics for this round
-        
+
         Args:
             training_metrics: Training metrics from LocalTrainer
             model_weights: Model weights
             network_metrics: Network metrics (optional)
-            
+
         Returns:
             Complete metrics dictionary
         """
         elapsed_time = time.time() - self.start_time if self.start_time else 0
-        
+
         metrics = {
             "client_id": self.client_id,
             "timestamp": time.time(),
             "elapsed_time_sec": round(elapsed_time, 2),
-            
+
             # System metrics
             "system": self.get_system_metrics(),
-            
+
             # Model metrics
             "model": self.calculate_model_size(model_weights),
-            
+
             # Training metrics
             "training": training_metrics
         }
-        
+
         # Add network metrics if provided
         if network_metrics:
             metrics["network"] = network_metrics
-        
+
+        # Add energy metrics
+        metrics["energy"] = self.estimate_energy_consumption(elapsed_time)
+
         return metrics
     
     def print_metrics(self, metrics: Dict[str, Any]):
@@ -220,6 +329,11 @@ class MetricsCollector:
         if 'network' in metrics:
             print(f"\n   🌐 Network:")
             for key, value in metrics['network'].items():
+                print(f"      {key}: {value}")
+
+        if 'energy' in metrics:
+            print(f"\n   ⚡ Energy:")
+            for key, value in metrics['energy'].items():
                 print(f"      {key}: {value}")
 
 
