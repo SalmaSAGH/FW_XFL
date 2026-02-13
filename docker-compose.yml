@@ -1,6 +1,26 @@
 version: '3.8'
 
 services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:13
+    container_name: xfl-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: newpassword
+      POSTGRES_DB: xfl_metrics
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - fl-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # FL Server
   server:
     image: xfl-rpilab-client:latest
@@ -17,6 +37,9 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - NUM_CLIENTS=5
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - fl-network
 
@@ -42,7 +65,7 @@ services:
   client-0:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-0
-    command: python -m client.run_client_standalone --client-id 0 --server-host server --num-clients 5 --batch-size 256
+    command: python -m client.run_client_standalone --client-id 0 --server-host server --num-clients 5 --batch-size 1024
     volumes:
       - ./data:/app/data:ro
     environment:
@@ -61,7 +84,7 @@ services:
   client-1:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-1
-    command: python -m client.run_client_standalone --client-id 1 --server-host server --num-clients 5 --batch-size 256
+    command: python -m client.run_client_standalone --client-id 1 --server-host server --num-clients 5 --batch-size 1024
     volumes:
       - ./data:/app/data:ro
     environment:
@@ -80,7 +103,7 @@ services:
   client-2:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-2
-    command: python -m client.run_client_standalone --client-id 2 --server-host server --num-clients 5 --batch-size 256
+    command: python -m client.run_client_standalone --client-id 2 --server-host server --num-clients 5 --batch-size 1024
     volumes:
       - ./data:/app/data:ro
     environment:
@@ -99,7 +122,7 @@ services:
   client-3:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-3
-    command: python -m client.run_client_standalone --client-id 3 --server-host server --num-clients 5 --batch-size 256
+    command: python -m client.run_client_standalone --client-id 3 --server-host server --num-clients 5 --batch-size 1024
     volumes:
       - ./data:/app/data:ro
     environment:
@@ -118,7 +141,7 @@ services:
   client-4:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-4
-    command: python -m client.run_client_standalone --client-id 4 --server-host server --num-clients 5 --batch-size 256
+    command: python -m client.run_client_standalone --client-id 4 --server-host server --num-clients 5 --batch-size 1024
     volumes:
       - ./data:/app/data:ro
     environment:
@@ -136,3 +159,6 @@ services:
 networks:
   fl-network:
     driver: bridge
+
+volumes:
+  postgres_data:

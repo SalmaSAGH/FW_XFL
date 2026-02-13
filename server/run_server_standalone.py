@@ -4,6 +4,8 @@ Standalone server script for Docker deployment
 
 import sys
 import os
+import time
+import psycopg2
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -17,17 +19,51 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from server.server import app
 
 
+def wait_for_postgres(host="postgres", port=5432, user="postgres", password="newpassword", db="xfl_metrics", timeout=60):
+    """Wait for PostgreSQL to be ready"""
+    print(f"⏳ Waiting for PostgreSQL at {host}:{port}...")
+    start_time = time.time()
+
+    while time.time() - start_time < timeout:
+        try:
+            conn = psycopg2.connect(
+                host=host,
+                port=port,
+                user=user,
+                password=password,
+                dbname=db
+            )
+            conn.close()
+            print("✅ PostgreSQL is ready!")
+            return True
+        except psycopg2.OperationalError:
+            print("   PostgreSQL not ready, waiting...")
+            time.sleep(2)
+
+    print("❌ Timeout waiting for PostgreSQL")
+    return False
+
+
 def main():
     """Main entry point for standalone server"""
-    
+
+    # Wait for PostgreSQL to be ready
+    if not wait_for_postgres():
+        print("❌ Cannot connect to PostgreSQL, exiting...")
+        sys.exit(1)
+
     # Read number of clients from environment variable
     num_clients = int(os.getenv('NUM_CLIENTS', '5'))
-    
+
+    # Read database URL from environment variable
+    db_url = os.getenv('DB_URL', 'postgresql://postgres:newpassword@postgres:5432/xfl_metrics')
+
     print("="*70)
     print("XFL-RPiLab FL Server (Docker)")
     print("="*70)
     print(f"Starting server on 0.0.0.0:5000")
     print(f"Expected clients: {num_clients}")
+    print(f"Database: {db_url}")
     print("="*70 + "\n")
     
     # Create model
@@ -53,7 +89,7 @@ def main():
         aggregation_strategy="fedavg",
         num_rounds=100,  # High number, will be controlled via API
         clients_per_round=num_clients,  # From environment variable
-        db_path="/app/logs/server_metrics.db"
+        db_url=db_url
     )
     
     # IMPORTANT: Do NOT start a round automatically

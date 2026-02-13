@@ -1,24 +1,30 @@
+# ============================================================================
 # XFL-RPiLab Configuration File
+# ============================================================================
+# Projet: Un framework logiciel de benchmarking pour le Layer-Wise FedML
+# Auteur: SAGHOUGH Salma
+# Encadrant: Pr Yann BEN MAISSA
+# ============================================================================
 
 # Experiment Information
 experiment:
-  name: "mnist_fedavg_baseline"
-  description: "Baseline experiment with FedAvg on MNIST"
+  name: "mnist_fedavg_xfl_baseline"
+  description: "Baseline experiment with FedAvg-XFL on MNIST (40 Raspberry Pi)"
   seed: 42  # For reproducibility
 
 # Federated Learning Parameters
 federated_learning:
-  num_rounds: 10  # Number of FL rounds
-  num_clients: 5  # Total number of clients
-  clients_per_round: 5  # Clients participating per round (can be < num_clients)
-  local_epochs: 1  # Number of local training epochs per client
+  num_rounds: 50  # Number of FL rounds
+  num_clients: 40  # Total number of clients (Raspberry Pi)
+  clients_per_round: 40  # Clients participating per round
+  local_epochs: 2  # Number of local training epochs per client
   
 # Dataset Configuration
 dataset:
   name: "MNIST"  # MNIST, CIFAR10, FashionMNIST
   data_distribution: "iid"  # iid or non_iid
   train_test_split: 0.8
-  batch_size: 32
+  batch_size: 512  # Augmenté pour RPi (moins de rounds réseau)
   
 # Model Configuration
 model:
@@ -32,15 +38,47 @@ training:
   learning_rate: 0.01
   momentum: 0.9  # For SGD
   weight_decay: 0.0001
+
+# ============================================================================
+# XFL CONFIGURATION (NOUVEAU)
+# ============================================================================
+xfl:
+  # Stratégie d'agrégation
+  # Options: "fedavg", "fedavg_xfl", "layerwise_xfl", "adaptive_xfl", "split_xfl"
+  aggregation_strategy: "fedavg_xfl"  # RECOMMANDÉ pour production
   
-# Layer-wise Strategy
+  # Configuration XFL
+  # Options: "all_layers", "importance_based", "layerwise", "adaptive", "split"
+  xfl_strategy: "importance_based"
+  
+  # Paramètre XFL
+  # - Pour importance_based: nombre de top-K couches à analyser (3-5 recommandé)
+  # - Pour layerwise: nombre de couches actives
+  # - Pour adaptive: K initial avant adaptation
+  # - Pour split: point de split (nombre de couches client)
+  xfl_param: 3
+  
+  # Tracking des métriques d'importance
+  track_metrics: true
+  
+  # Pour LayerWise-XFL seulement
+  freeze_threshold: 0.3  # Seuil pour geler les couches (0.0-1.0)
+  
+  # Export des métriques XFL
+  export_layer_metrics: true
+  export_format: "csv"  # csv, json
+  
+# ============================================================================
+# LAYER-WISE STRATEGY (LEGACY - utiliser xfl à la place)
+# ============================================================================
 strategy:
-  type: "all_layers"  # all_layers, first_n_layers, last_n_layers, random_layers
-  num_layers: null  # Used for first_n_layers, last_n_layers (null means all)
+  type: "all_layers"  # DÉPRÉCIÉ - utiliser xfl.xfl_strategy
+  num_layers: null  # DÉPRÉCIÉ - utiliser xfl.xfl_param
   
-# Network Constraints (Simulation)
+# Network Constraints (Simulation - pour Docker uniquement)
+# Pour Raspberry Pi réels, ces contraintes seront naturelles
 network:
-  simulate_constraints: true
+  simulate_constraints: false  # false pour RPi réels
   latency_ms: 50  # Average latency in milliseconds
   latency_std_ms: 10  # Standard deviation of latency
   bandwidth_mbps: 10  # Bandwidth in Mbps
@@ -53,16 +91,28 @@ monitoring:
   metrics_interval_sec: 5  # Collect metrics every N seconds
   log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
   
+  # Métriques XFL spécifiques
+  collect_layer_importance: true
+  collect_client_divergence: true
+  collect_convergence_rate: true
+  
 # Server Configuration
 server:
-  host: "localhost"
+  host: "0.0.0.0"  # Écouter sur toutes les interfaces pour RPi
   port: 5000
-  aggregation_method: "fedavg"  # fedavg (Federated Averaging)
+  aggregation_method: "fedavg"  # DÉPRÉCIÉ - utiliser xfl.aggregation_strategy
+
+  # Base de données des métriques
+  metrics_db_url: "postgresql://postgres:newpassword@localhost:5432/xfl_metrics"
   
 # Client Configuration
 client:
   timeout_sec: 300  # Timeout for client training
   max_retries: 3  # Max connection retries
+  
+  # Pour Raspberry Pi
+  auto_detect_resources: true  # Détection auto CPU/RAM
+  cpu_affinity: null  # Liste de CPUs à utiliser (null = auto)
   
 # Paths
 paths:
@@ -70,3 +120,41 @@ paths:
   models_dir: "./models"
   logs_dir: "./logs"
   results_dir: "./results"
+  
+# ============================================================================
+# PRESETS D'EXPÉRIMENTATION (OPTIONNEL)
+# ============================================================================
+# Décommenter pour utiliser un preset prédéfini
+# preset: "quick_test"  # quick_test, short_experiment, standard_experiment, full_experiment
+
+# ============================================================================
+# NOTES D'UTILISATION
+# ============================================================================
+# 
+# 1. Configuration Recommandée (Production):
+#    xfl.aggregation_strategy: "fedavg_xfl"
+#    xfl.xfl_strategy: "importance_based"
+#    xfl.xfl_param: 3
+#
+# 2. Baseline (Sans XFL):
+#    xfl.aggregation_strategy: "fedavg"
+#    xfl.track_metrics: false
+#
+# 3. Expérimental (LayerWise):
+#    xfl.aggregation_strategy: "layerwise_xfl"
+#    xfl.xfl_strategy: "layerwise"
+#    xfl.xfl_param: 2
+#    xfl.freeze_threshold: 0.3
+#
+# 4. Expérimental (Adaptive):
+#    xfl.aggregation_strategy: "adaptive_xfl"
+#    xfl.xfl_strategy: "adaptive"
+#    xfl.xfl_param: 3
+#    federated_learning.num_rounds: 50  # Minimum recommandé
+#
+# 5. Split Learning (Privacy/Bandwidth):
+#    xfl.aggregation_strategy: "split_xfl"
+#    xfl.xfl_strategy: "split"
+#    xfl.xfl_param: 2  # Point de split
+#
+# ============================================================================

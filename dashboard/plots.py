@@ -4,7 +4,7 @@ Plotting and visualization module for XFL-RPiLab
 
 import matplotlib.pyplot as plt
 import seaborn as sns
-import sqlite3
+import psycopg2
 import pandas as pd
 from pathlib import Path
 import numpy as np
@@ -21,35 +21,31 @@ class ResultsVisualizer:
     """
     Visualize FL experiment results from database
     """
-    
-    def __init__(self, db_path: str = "logs/server_metrics.db", output_dir: str = "results"):
+
+    def __init__(self, db_url: str = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics", output_dir: str = "results"):
         """
         Args:
-            db_path: Path to metrics database
+            db_url: PostgreSQL database URL
             output_dir: Directory to save plots
         """
-        self.db_path = db_path
+        self.db_url = db_url
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Check if database exists
-        if not Path(db_path).exists():
-            raise FileNotFoundError(f"Database not found: {db_path}")
-        
+
         print(f"✅ ResultsVisualizer initialized")
-        print(f"   Database: {db_path}")
+        print(f"   Database: {db_url}")
         print(f"   Output directory: {output_dir}")
     
     def load_round_metrics(self) -> pd.DataFrame:
         """Load round-level metrics into DataFrame"""
-        conn = sqlite3.connect(self.db_path)
+        conn = psycopg2.connect(self.db_url)
         df = pd.read_sql_query("SELECT * FROM round_metrics ORDER BY round_number", conn)
         conn.close()
         return df
-    
+
     def load_client_metrics(self) -> pd.DataFrame:
         """Load client-level metrics into DataFrame"""
-        conn = sqlite3.connect(self.db_path)
+        conn = psycopg2.connect(self.db_url)
         df = pd.read_sql_query("SELECT * FROM client_metrics ORDER BY round_number, client_id", conn)
         conn.close()
         return df
@@ -252,41 +248,187 @@ class ResultsVisualizer:
     def plot_client_performance_comparison(self, save: bool = True, show: bool = False):
         """
         Compare performance across different clients
-        
+
         Args:
             save: Save plot to file
             show: Display plot
         """
         df = self.load_client_metrics()
-        
+
         if df.empty or 'training_accuracy' not in df.columns:
             print("⚠️  No client accuracy data available")
             return
-        
+
         fig, ax = plt.subplots(figsize=(12, 6))
-        
+
         # Get unique clients
         clients = df['client_id'].unique()
-        
+
         # Plot each client's accuracy
         for client_id in clients:
             client_data = df[df['client_id'] == client_id]
             ax.plot(client_data['round_number'], client_data['training_accuracy'],
                    marker='o', linewidth=2, markersize=6, label=f'Client {client_id}', alpha=0.7)
-        
+
         ax.set_xlabel('FL Round', fontsize=12, fontweight='bold')
         ax.set_ylabel('Training Accuracy (%)', fontsize=12, fontweight='bold')
         ax.set_title('Client Training Accuracy Comparison', fontsize=14, fontweight='bold', pad=20)
         ax.grid(True, alpha=0.3)
         ax.legend(loc='best', fontsize=9, ncol=2)
-        
+
         plt.tight_layout()
-        
+
         if save:
             output_path = self.output_dir / "client_comparison.png"
             plt.savefig(output_path, dpi=300, bbox_inches='tight')
             print(f"✅ Saved: {output_path}")
-        
+
+        if show:
+            plt.show()
+        else:
+            plt.close()
+
+    def plot_latency_evolution(self, save: bool = True, show: bool = False):
+        """
+        Plot network latency evolution across rounds
+
+        Args:
+            save: Save plot to file
+            show: Display plot
+        """
+        df = self.load_client_metrics()
+
+        if df.empty or 'latency_ms' not in df.columns:
+            print("⚠️  No latency data available")
+            return
+
+        # Calculate average latency per round
+        avg_latency = df.groupby('round_number')['latency_ms'].mean().reset_index()
+        std_latency = df.groupby('round_number')['latency_ms'].std().reset_index()
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        # Plot average with error bars
+        ax.errorbar(avg_latency['round_number'], avg_latency['latency_ms'],
+                   yerr=std_latency['latency_ms'], marker='o', linewidth=2,
+                   markersize=8, capsize=5, color='#FF6B6B', label='Avg Latency')
+
+        # Add grid
+        ax.grid(True, alpha=0.3)
+
+        # Labels and title
+        ax.set_xlabel('FL Round', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Latency (ms)', fontsize=12, fontweight='bold')
+        ax.set_title('Network Latency Evolution', fontsize=14, fontweight='bold', pad=20)
+
+        # Add legend
+        ax.legend(loc='upper right', fontsize=10)
+
+        # Tight layout
+        plt.tight_layout()
+
+        if save:
+            output_path = self.output_dir / "latency_evolution.png"
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            print(f"✅ Saved: {output_path}")
+
+        if show:
+            plt.show()
+        else:
+            plt.close()
+
+    def plot_energy_consumption(self, save: bool = True, show: bool = False):
+        """
+        Plot energy consumption evolution across rounds
+
+        Args:
+            save: Save plot to file
+            show: Display plot
+        """
+        df = self.load_client_metrics()
+
+        if df.empty or 'energy_wh' not in df.columns:
+            print("⚠️  No energy data available")
+            return
+
+        # Calculate average energy consumption per round
+        avg_energy = df.groupby('round_number')['energy_wh'].mean().reset_index()
+        std_energy = df.groupby('round_number')['energy_wh'].std().reset_index()
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+
+        # Plot average with error bars
+        ax.errorbar(avg_energy['round_number'], avg_energy['energy_wh'],
+                   yerr=std_energy['energy_wh'], marker='s', linewidth=2,
+                   markersize=8, capsize=5, color='#4ECDC4', label='Avg Energy Consumption')
+
+        # Add grid
+        ax.grid(True, alpha=0.3)
+
+        # Labels and title
+        ax.set_xlabel('FL Round', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Energy Consumption (Wh)', fontsize=12, fontweight='bold')
+        ax.set_title('Client Energy Consumption Evolution', fontsize=14, fontweight='bold', pad=20)
+
+        # Add legend
+        ax.legend(loc='upper right', fontsize=10)
+
+        # Tight layout
+        plt.tight_layout()
+
+        if save:
+            output_path = self.output_dir / "energy_consumption.png"
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            print(f"✅ Saved: {output_path}")
+
+        if show:
+            plt.show()
+        else:
+            plt.close()
+
+    def plot_network_metrics(self, save: bool = True, show: bool = False):
+        """
+        Plot network metrics (packet loss and jitter)
+
+        Args:
+            save: Save plot to file
+            show: Display plot
+        """
+        df = self.load_client_metrics()
+
+        if df.empty:
+            print("⚠️  No client metrics available")
+            return
+
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+        # Packet Loss Rate
+        if 'packet_loss_rate' in df.columns and not df['packet_loss_rate'].isna().all():
+            avg_loss = df.groupby('round_number')['packet_loss_rate'].mean().reset_index()
+            ax1.plot(avg_loss['round_number'], avg_loss['packet_loss_rate'] * 100,
+                    marker='o', linewidth=2, markersize=8, color='#45B7D1')
+            ax1.set_xlabel('FL Round', fontsize=11, fontweight='bold')
+            ax1.set_ylabel('Packet Loss Rate (%)', fontsize=11, fontweight='bold')
+            ax1.set_title('Average Packet Loss Rate', fontsize=12, fontweight='bold')
+            ax1.grid(True, alpha=0.3)
+
+        # Jitter
+        if 'jitter_ms' in df.columns and not df['jitter_ms'].isna().all():
+            avg_jitter = df.groupby('round_number')['jitter_ms'].mean().reset_index()
+            ax2.plot(avg_jitter['round_number'], avg_jitter['jitter_ms'],
+                    marker='s', linewidth=2, markersize=8, color='#FFA07A')
+            ax2.set_xlabel('FL Round', fontsize=11, fontweight='bold')
+            ax2.set_ylabel('Jitter (ms)', fontsize=11, fontweight='bold')
+            ax2.set_title('Average Network Jitter', fontsize=12, fontweight='bold')
+            ax2.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+
+        if save:
+            output_path = self.output_dir / "network_metrics.png"
+            plt.savefig(output_path, dpi=300, bbox_inches='tight')
+            print(f"✅ Saved: {output_path}")
+
         if show:
             plt.show()
         else:
@@ -336,21 +478,34 @@ class ResultsVisualizer:
 if __name__ == "__main__":
     """Generate plots from experiment results"""
     print("🧪 Generating plots from experiment results...\n")
-    
+
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from config.config_parser import load_config
+
+    # Load configuration to get database URL
+    try:
+        config = load_config()
+        db_url = config.server.metrics_db_url
+    except Exception as e:
+        print(f"⚠️  Could not load config: {e}")
+        print("   Using default PostgreSQL URL...")
+        db_url = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics"
+
     try:
         visualizer = ResultsVisualizer(
-            db_path="logs/server_metrics.db",
+            db_url=db_url,
             output_dir="results"
         )
-        
+
         visualizer.generate_all_plots(show=False)
-        
+
         print("\n✅ Visualization complete!")
-        
-    except FileNotFoundError as e:
-        print(f"\n❌ Error: {e}")
-        print("   Please run an experiment first with: python run_experiment.py")
+
     except Exception as e:
         print(f"\n❌ Error generating plots: {e}")
+        print("   Make sure PostgreSQL is running and the database exists.")
+        print("   For Docker: docker-compose up -d postgres")
         import traceback
         traceback.print_exc()

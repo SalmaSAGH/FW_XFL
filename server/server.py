@@ -27,7 +27,7 @@ class FLServer:
         aggregation_strategy: str = "fedavg",
         num_rounds: int = 10,
         clients_per_round: int = 5,
-        db_path: str = "logs/server_metrics.db",
+        db_url: str = "postgresql://postgres:newpassword@postgres:5432/xfl_metrics",
         xfl_strategy: str = "all_layers",
         xfl_param: int = 3
     ):
@@ -37,7 +37,7 @@ class FLServer:
             aggregation_strategy: Aggregation method ('fedavg', 'fedprox')
             num_rounds: Total number of FL rounds
             clients_per_round: Number of clients per round
-            db_path: Path to metrics database
+            db_url: PostgreSQL database URL
             xfl_strategy: XFL layer selection strategy
             xfl_param: XFL parameter (e.g., N for first_n/last_n)
         """
@@ -51,12 +51,13 @@ class FLServer:
         self.clients_per_round = clients_per_round
         
         # Metrics collector
-        self.metrics_collector = ServerMetricsCollector(db_path)
+        self.metrics_collector = ServerMetricsCollector(db_url)
         
         # State management
         self.current_round = 0
         self.round_in_progress = False
-        self.client_submissions = {}  # client_id -> submission dict
+        self.client_submissions = []  # List of submission dicts
+        self.selected_clients = []  # Clients selected for current round
         self.lock = threading.Lock()
         
         # Test metrics
@@ -76,27 +77,33 @@ class FLServer:
                     "status": "completed",
                     "message": "All rounds completed"
                 }
-            
+
             if self.round_in_progress:
                 return {
                     "status": "in_progress",
                     "round": self.current_round,
                     "message": "Round already in progress"
                 }
-            
+
             self.current_round += 1
             self.round_in_progress = True
             self.client_submissions = []  # Reset submissions list
-            
+
+            # Select clients for this round (for dashboard display)
+            import random
+            self.selected_clients = random.sample(range(40), self.clients_per_round)  # Assume 40 total clients
+
             # Get XFL info for logging
             xfl_info = self.aggregation_strategy.get_xfl_info()
             print(f"\n🔄 Starting Round {self.current_round}/{self.num_rounds}")
+            print(f"   Selected clients: {self.selected_clients}")
             print(f"   XFL Strategy: {xfl_info['strategy']}")
-            
+
             return {
                 "status": "started",
                 "round": self.current_round,
                 "clients_expected": self.clients_per_round,
+                "selected_clients": self.selected_clients,
                 "xfl_strategy": xfl_info['strategy']
             }
     
@@ -115,7 +122,14 @@ class FLServer:
                     "status": "error",
                     "message": "No round in progress"
                 }
-            
+
+            # Check for duplicate submission from same client
+            if any(sub["client_id"] == client_id for sub in self.client_submissions):
+                return {
+                    "status": "duplicate",
+                    "message": f"Client {client_id} has already submitted for this round"
+                }
+
             # Store submission
             self.client_submissions.append({
                 "client_id": client_id,
@@ -124,21 +138,21 @@ class FLServer:
                 "metrics": client_metrics,
                 "quantization_meta": quantization_meta
             })
-            
+
             # Store client metrics in database
             self.metrics_collector.store_client_metrics(
                 self.current_round,
                 client_id,
                 client_metrics
             )
-            
+
             print(f"   ✅ Received update from Client {client_id} "
                   f"({len(self.client_submissions)}/{self.clients_per_round})")
-            
+
             # Check if all clients submitted
             if len(self.client_submissions) >= self.clients_per_round:
                 self._aggregate_round()
-            
+
             return {
                 "status": "received",
                 "round": self.current_round,
@@ -213,6 +227,7 @@ class FLServer:
 
         # Reset round state
         self.round_in_progress = False
+        self.client_submissions = []  # Clear submissions after aggregation
     
     def _evaluate_global_model(self):
         """Evaluate global model on test set"""
@@ -297,6 +312,8 @@ class FLServer:
                 "round_in_progress": self.round_in_progress,
                 "submissions_received": len(self.client_submissions),
                 "clients_expected": self.clients_per_round,
+                "submitted_clients": [sub["client_id"] for sub in self.client_submissions],
+                "selected_clients": self.selected_clients if self.round_in_progress else [],
                 "xfl_strategy": xfl_info['strategy'],
                 "xfl_param": xfl_info['param'],
                 "num_layers": num_layers
@@ -359,8 +376,8 @@ def base64_to_weights(base64_str: str) -> OrderedDict:
 def status():
     """Get server status with XFL info"""
     if fl_server is None:
-        return jsonify({"error": "Server not initialized"}), 500
-    
+        return jsonify({"status": "initializing"}), 200
+
     return jsonify(fl_server.get_server_status())
 
 
@@ -478,7 +495,7 @@ def create_server(
     aggregation_strategy: str = "fedavg",
     num_rounds: int = 10,
     clients_per_round: int = 5,
-    db_path: str = "logs/server_metrics.db",
+    db_url: str = "postgresql://postgres:newpassword@postgres:5432/xfl_metrics",
     xfl_strategy: str = "all_layers",
     xfl_param: int = 3
 ) -> FLServer:
@@ -486,13 +503,13 @@ def create_server(
     Create and initialize FL server with XFL support
     """
     global fl_server
-    
+
     fl_server = FLServer(
         global_model=global_model,
         aggregation_strategy=aggregation_strategy,
         num_rounds=num_rounds,
         clients_per_round=clients_per_round,
-        db_path=db_path,
+        db_url=db_url,
         xfl_strategy=xfl_strategy,
         xfl_param=xfl_param
     )

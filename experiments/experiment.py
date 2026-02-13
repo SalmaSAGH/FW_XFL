@@ -87,7 +87,7 @@ class ExperimentOrchestrator:
             aggregation_strategy=self.config.server.aggregation_method,
             num_rounds=self.config.federated_learning.num_rounds,
             clients_per_round=self.config.federated_learning.clients_per_round,
-            db_path=os.path.join(self.config.paths.logs_dir, "server_metrics.db")
+            db_url=self.config.server.metrics_db_url
         )
         
         # Start server in separate thread
@@ -281,7 +281,7 @@ class ExperimentOrchestrator:
                 print(f"\n⚠️  Could not retrieve final metrics: {e}")
             
             print(f"\n✅ Experiment '{self.config.experiment.name}' completed successfully!")
-            print(f"📁 Metrics saved to: {os.path.join(self.config.paths.logs_dir, 'server_metrics.db')}")
+            print(f"📁 Metrics saved to PostgreSQL database: {self.config.server.metrics_db_url}")
             
         except KeyboardInterrupt:
             print("\n\n⚠️  Experiment interrupted by user")

@@ -19,6 +19,26 @@ def generate_docker_compose(num_clients: int, output_file: str = "docker-compose
     compose_content = f"""version: '3.8'
 
 services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:13
+    container_name: xfl-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: newpassword
+      POSTGRES_DB: xfl_metrics
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - fl-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   # FL Server
   server:
     image: xfl-rpilab-client:latest
@@ -35,6 +55,9 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - NUM_CLIENTS={num_clients}
+    depends_on:
+      postgres:
+        condition: service_healthy
     networks:
       - fl-network
 
@@ -81,10 +104,13 @@ services:
 
 """
     
-    # Add networks section
+    # Add networks and volumes section
     compose_content += """networks:
   fl-network:
     driver: bridge
+
+volumes:
+  postgres_data:
 """
     
     # Write to file
