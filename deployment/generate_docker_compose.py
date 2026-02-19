@@ -1,6 +1,6 @@
 """
 Generate docker-compose.yml with N clients
-Usage: python deployment/generate_docker_compose.py --num-clients 40
+Usage: python deployment/generate_docker_compose.py --num-clients 5
 """
 
 import argparse
@@ -27,6 +27,15 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: newpassword
       POSTGRES_DB: xfl_metrics
+      # Enable synchronous commits to prevent data loss on crash
+      # This ensures data is written to disk immediately
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command: >
+      postgres
+      -c synchronous_commit=on
+      -c fsync=on
+      -c full_page_writes=on
+      -c wal_level=minimal
     ports:
       - "5432:5432"
     volumes:
@@ -38,6 +47,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2048M
+    # Add restart policy to keep postgres running
+    restart: unless-stopped
 
   # FL Server
   server:
@@ -55,11 +71,17 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - NUM_CLIENTS={num_clients}
+      - DATABASE_URL=postgresql://postgres:newpassword@postgres:5432/xfl_metrics
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - fl-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2048M
 
   # Dashboard
   dashboard:
@@ -74,10 +96,16 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       - NUM_CLIENTS={num_clients}
+      - DATABASE_URL=postgresql://postgres:newpassword@postgres:5432/xfl_metrics
     depends_on:
       - server
     networks:
       - fl-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
 
 """
     

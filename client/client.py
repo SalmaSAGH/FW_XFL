@@ -14,6 +14,9 @@ import torch
 from .trainer import LocalTrainer
 from .metrics import MetricsCollector
 
+# Import gc for garbage collection
+import gc
+
 
 class FLClient:
     """Federated Learning Client - Speed Optimized"""
@@ -58,6 +61,19 @@ class FLClient:
 
         print(f"✅ FLClient {client_id} initialized ({len(train_loader.dataset)} samples)")
     
+    def _cleanup_memory(self):
+        """Clean up memory after training to prevent OOM"""
+        # Clear PyTorch cache
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Clear any temporary variables
+        if hasattr(self, '_quantization_meta'):
+            delattr(self, '_quantization_meta')
+    
     def _weights_to_base64(self, weights: OrderedDict) -> str:
         """Serialize weights to base64 string"""
         weights_bytes = pickle.dumps(weights)
@@ -81,7 +97,7 @@ class FLClient:
         try:
             # Step 1: Get global model (with timeout)
             response = requests.get(
-                f"{self.server_url}/get_global_model",
+                f"{self.server_url}/api/get_global_model",
                 timeout=10
             )
             if response.status_code != 200:
@@ -163,7 +179,7 @@ class FLClient:
                 delattr(self, '_quantization_meta')
 
             response = requests.post(
-                f"{self.server_url}/submit_update",
+                f"{self.server_url}/api/submit_update",
                 json=payload,
                 timeout=30
             )
@@ -179,11 +195,16 @@ class FLClient:
                 print(f"Client {self.client_id}: Upload done in {upload_time:.1f}s "
                       f"({result.get('submissions')}/{result.get('submissions')} received)")
 
+            # Clean up memory after successful upload
+            self._cleanup_memory()
+
             return True
 
         except Exception as e:
             if verbose:
                 print(f"Client {self.client_id}: Error - {e}")
+            # Clean up memory even on failure
+            self._cleanup_memory()
             return False
 
     def _apply_sparsification(self, weights: OrderedDict, threshold: float) -> OrderedDict:

@@ -19,7 +19,7 @@ def wait_for_server(server_url: str):
     """Wait for server"""
     for i in range(30):
         try:
-            if requests.get(f"{server_url}/status", timeout=2).status_code == 200:
+            if requests.get(f"{server_url}/api/status", timeout=2).status_code == 200:
                 return True
         except:
             pass
@@ -77,16 +77,19 @@ def main():
     
     print(f"✅ Client {args.client_id} READY and waiting for rounds\n")
     
-    # Main loop - AGGRESSIVE polling
+    # Main loop - AGGRESSIVE polling with exponential backoff retry
     last_participated = 0
     check_count = 0
+    consecutive_failures = 0
+    max_retries = 5
+    base_delay = 0.5  # Start with 0.5 second delay
     
     while True:
         try:
             check_count += 1
             
             # Get status
-            resp = requests.get(f"{server_url}/status", timeout=2)
+            resp = requests.get(f"{server_url}/api/status", timeout=2)
             status = resp.json()
             
             current_round = status.get('current_round', 0)
@@ -99,24 +102,52 @@ def main():
             if current_round > last_participated and current_round > 0:
                 print(f"\n🔥 Client {args.client_id}: Round {current_round} DETECTED! Participating NOW...")
                 
-                start_time = time.time()
-                success = fl_client.participate_in_round(verbose=False)
-                elapsed = time.time() - start_time
+                # Retry logic with exponential backoff
+                retry_count = 0
+                success = False
                 
-                if success:
-                    last_participated = current_round
-                    print(f"✅ Client {args.client_id}: Round {current_round} DONE in {elapsed:.1f}s\n")
-                else:
-                    print(f"⚠️  Client {args.client_id}: Failed, will retry\n")
+                while retry_count < max_retries and not success:
+                    start_time = time.time()
+                    success = fl_client.participate_in_round(verbose=False)
+                    elapsed = time.time() - start_time
+                    
+                    if success:
+                        last_participated = current_round
+                        consecutive_failures = 0
+                        print(f"✅ Client {args.client_id}: Round {current_round} DONE in {elapsed:.1f}s\n")
+                        break
+                    else:
+                        retry_count += 1
+                        consecutive_failures += 1
+                        
+                        if retry_count < max_retries:
+                            # Exponential backoff: 0.5s, 1s, 2s, 4s, 8s...
+                            delay = base_delay * (2 ** (retry_count - 1))
+                            print(f"⚠️  Client {args.client_id}: Attempt {retry_count}/{max_retries} failed. Retrying in {delay:.1f}s...")
+                            time.sleep(delay)
+                        else:
+                            print(f"❌ Client {args.client_id}: All {max_retries} attempts failed for round {current_round}")
             
-            # Very short sleep - check every 200ms
-            time.sleep(0.2)
+            # Reset failure count on successful round
+            if current_round == last_participated:
+                consecutive_failures = 0
+            
+            # Adaptive sleep - check more frequently when server might be busy
+            # But back off if there are consecutive failures
+            if consecutive_failures > 3:
+                time.sleep(2.0)  # Back off to 2s if having issues
+            else:
+                # Very short sleep - check every 200ms
+                time.sleep(0.2)
         
         except KeyboardInterrupt:
             print(f"Client {args.client_id} stopped by user")
             break
-        except:
-            time.sleep(0.5)
+        except Exception as e:
+            # On exception, use exponential backoff
+            delay = base_delay * (2 ** min(consecutive_failures, 5))
+            print(f"⚠️  Client {args.client_id}: Connection error - {e}. Retrying in {delay:.1f}s...")
+            time.sleep(delay)
 
 
 if __name__ == "__main__":

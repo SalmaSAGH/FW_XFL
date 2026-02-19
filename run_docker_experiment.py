@@ -40,6 +40,26 @@ def clear_postgresql_database():
         return False
 
 
+def check_existing_metrics():
+    """Check if there are existing metrics in the database"""
+    try:
+        conn = psycopg2.connect("postgresql://postgres:newpassword@localhost:5432/xfl_metrics")
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM round_metrics")
+        round_count = cursor.fetchone()[0]
+
+        cursor.execute("SELECT COUNT(*) FROM client_metrics")
+        client_count = cursor.fetchone()[0]
+
+        conn.close()
+
+        return round_count, client_count
+    except Exception as e:
+        print(f"⚠️  Could not check existing metrics: {e}")
+        return 0, 0
+
+
 def main():
     print("""
     ╔══════════════════════════════════════════════════════════════╗
@@ -75,12 +95,15 @@ def main():
     print(f"   Server: localhost:5000")
     print(f"   Dashboard: localhost:5001")
     
-    # Clear PostgreSQL database by default
-    print("\n🧹 Clearing old experiment data...")
-    if clear_postgresql_database():
-        print("✅ PostgreSQL database cleared")
-    else:
-        print("⚠️  Could not clear PostgreSQL database")
+    # Clear PostgreSQL database by default (commented out to preserve historical data)
+    # Uncomment the following lines if you want to clear old data before each experiment
+    # print("\n🧹 Clearing old experiment data...")
+    # if clear_postgresql_database():
+    #     print("✅ PostgreSQL database cleared")
+    # else:
+    #     print("⚠️  Could not clear PostgreSQL database")
+    
+    print("\n📊 Preserving existing experiment data...")
     
     # Generate docker-compose.yml
     print("\n" + "="*70)
