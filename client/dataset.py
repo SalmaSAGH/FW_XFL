@@ -182,7 +182,7 @@ def load_dataset(
 def create_dataloaders(
     dataset_name: str,
     num_clients: int,
-    batch_size: int = 32,
+    batch_size: int = 256,
     distribution: str = "iid",
     data_dir: str = "./data",
     seed: int = 42
@@ -257,7 +257,7 @@ if __name__ == "__main__":
     client_loaders, test_loader = create_dataloaders(
         dataset_name="MNIST",
         num_clients=5,
-        batch_size=32,
+        batch_size=256,
         distribution="iid"
     )
     
@@ -266,7 +266,7 @@ if __name__ == "__main__":
     client_loaders_non_iid, _ = create_dataloaders(
         dataset_name="MNIST",
         num_clients=5,
-        batch_size=32,
+        batch_size=256,
         distribution="non_iid"
     )
     

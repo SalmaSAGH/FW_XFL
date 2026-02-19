@@ -56,7 +56,7 @@ def main():
     num_clients = int(os.getenv('NUM_CLIENTS', '5'))
 
     # Read database URL from environment variable
-    db_url = os.getenv('DB_URL', 'postgresql://postgres:newpassword@postgres:5432/xfl_metrics')
+    db_url = os.getenv('DB_URL') or os.getenv('DATABASE_URL', 'postgresql://postgres:newpassword@postgres:5432/xfl_metrics')
 
     print("="*70)
     print("XFL-RPiLab FL Server (Docker)")

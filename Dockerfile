@@ -29,5 +29,10 @@ RUN mkdir -p /app/data /app/logs
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
+# PyTorch memory optimization settings
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+ENV OMP_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
+
 # Default command (will be overridden by docker-compose)
 CMD ["python", "-m", "client.run_client_standalone"]
