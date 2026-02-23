@@ -22,6 +22,7 @@ import sys
 
 from .strategy import create_aggregation_strategy, XFL, FedAvg
 from .metrics import ServerMetricsCollector
+import gc
 
 # Database URL for dashboard APIs
 # Default to localhost for local development, Docker will override via environment variable
@@ -735,6 +736,11 @@ class FLServer:
         # Reset round state
         self.round_in_progress = False
         self.client_submissions = []  # Clear submissions after aggregation
+        
+        # Force garbage collection to free memory after aggregation
+        # This is especially important when handling large model weights from many clients
+        gc.collect()
+        print(f"🧹 Garbage collection triggered after round {self.current_round}")
     
     def _evaluate_global_model(self):
         """Evaluate global model on test set"""
@@ -1278,10 +1284,18 @@ def get_clients_data():
     if fl_server is not None:
         server_status = fl_server.get_server_status()
         round_in_progress = server_status.get('round_in_progress', False)
+        
+        # Debug logging
+        print(f"[DEBUG] /api/clients - round_in_progress: {round_in_progress}")
+        
         if round_in_progress:
             current_round = server_status.get('current_round', last_completed_round)
             submitted_clients = set(server_status.get('submitted_clients', []))
             selected_clients = set(server_status.get('selected_clients', []))
+            
+            print(f"[DEBUG] /api/clients - current_round: {current_round}")
+            print(f"[DEBUG] /api/clients - submitted_clients: {submitted_clients}")
+            print(f"[DEBUG] /api/clients - selected_clients: {selected_clients}")
         else:
             selected_clients = set()
 
@@ -1289,16 +1303,16 @@ def get_clients_data():
     for client_id in range(expected_clients):
         if round_in_progress:
             if client_id in submitted_clients:
-                # Client has submitted this round - show as active
+                # Client has submitted this round - show as active (green)
                 state = "active"
             elif client_id in selected_clients:
-                # Client is selected for this round but hasn't submitted yet - show as training
+                # Client is selected for this round but hasn't submitted yet - show as training (blue)
                 state = "training"
             else:
-                # Client is not selected for this round - show as idle
+                # Client is not selected for this round - show as idle (gray)
                 state = "idle"
         else:
-            # No round in progress
+            # No round in progress - show last round's active clients or idle
             if client_id in active_in_last_round:
                 state = "active"
             else:
@@ -1452,21 +1466,22 @@ def get_network_metrics_data():
 
 @app.route('/api/rounds_history', methods=['GET'])
 def get_rounds_history():
-    """Get detailed history of completed rounds"""
+    """Get detailed history of all rounds (completed and in-progress)"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
 
-        # Get only completed rounds (where global_test_accuracy is NOT NULL)
+        # Get ALL rounds - both completed and in-progress
+        # This ensures the frontend always gets data, even if no rounds are completed yet
         cursor.execute("""
             SELECT round_number,
                    global_test_accuracy,
                    global_test_loss,
                    aggregation_time_sec,
                    num_clients,
-                   strategy
+                   strategy,
+                   metrics_json
             FROM round_metrics
-            WHERE global_test_accuracy IS NOT NULL
             ORDER BY round_number DESC
             LIMIT 50
         """)
@@ -1476,13 +1491,17 @@ def get_rounds_history():
 
         rounds = []
         for row in data:
+            # Determine if round is completed or in-progress
+            is_completed = row[1] is not None  # global_test_accuracy is not null
+            
             rounds.append({
                 "round": row[0],
                 "accuracy": round(row[1], 2) if row[1] else None,
                 "loss": round(row[2], 4) if row[2] else None,
                 "agg_time": round(row[3], 2) if row[3] else None,
                 "clients": row[4],
-                "strategy": row[5] if row[5] else 'all_layers'
+                "strategy": row[5] if row[5] else 'all_layers',
+                "status": "completed" if is_completed else "in_progress"
             })
 
         return jsonify({"rounds": rounds})
@@ -1572,6 +1591,14 @@ def create_server(
             if 'clientsPerRound' in saved_config:
                 fl_server.clients_per_round = int(saved_config['clientsPerRound'])
                 print(f"✅ Updated clients_per_round to {fl_server.clients_per_round} from saved config")
+            
+            # CRITICAL FIX: Load and apply the XFL strategy from saved config on startup
+            # This ensures the strategy persists across server restarts
+            if 'strategy' in saved_config:
+                strategy = saved_config.get('strategy', 'all_layers')
+                param = saved_config.get('xflParam', 3)
+                print(f"✅ Loading strategy from config: {strategy}, param: {param}")
+                fl_server.set_xfl_strategy(strategy, param)
     except Exception as e:
         print(f"⚠️  Warning: Could not load config: {e}")
     

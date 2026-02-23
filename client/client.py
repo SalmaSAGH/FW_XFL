@@ -42,6 +42,9 @@ class FLClient:
         self.server_url = server_url
         self.local_epochs = local_epochs
         self.timeout = timeout
+        # Retry settings for robust connection handling
+        self.max_retries = 5
+        self.base_delay = 1
 
         # XFL compression parameters
         self.sparsification_threshold = sparsification_threshold
