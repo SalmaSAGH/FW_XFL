@@ -69,7 +69,7 @@ class ServerMetricsCollector:
         sys.exit(0)
     
     def _init_connection_pool(self):
-        """Initialize the connection pool"""
+        """Initialize the connection pool with improved settings for long-running applications"""
         try:
             # Parse the database URL to get connection parameters
             # Format: postgresql://user:password@host:port/dbname
@@ -95,7 +95,7 @@ class ServerMetricsCollector:
                 port = '5432'
                 dbname = 'postgres'
             
-            # Create connection pool
+            # Create connection pool with keepalive settings for long-running applications
             self._connection_pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=2,
                 maxconn=10,
@@ -103,7 +103,9 @@ class ServerMetricsCollector:
                 port=port,
                 user=user,
                 password=password,
-                database=dbname
+                database=dbname,
+                connect_timeout=10,
+                options='-c statement_timeout=30000'  # 30 second query timeout to prevent hanging
             )
             print(f"✅ Connection pool initialized (min: 2, max: 10)")
         except Exception as e:

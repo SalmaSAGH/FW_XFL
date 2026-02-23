@@ -16,10 +16,7 @@ def generate_docker_compose(num_clients: int, output_file: str = "docker-compose
         output_file: Output file path
     """
     
-    compose_content = f"""version: '3.8'
-
-services:
-  # PostgreSQL Database
+    compose_content = """services:
   postgres:
     image: postgres:13
     container_name: xfl-postgres
@@ -27,8 +24,6 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: newpassword
       POSTGRES_DB: xfl_metrics
-      # Enable synchronous commits to prevent data loss on crash
-      # This ensures data is written to disk immediately
       POSTGRES_INITDB_ARGS: "--data-checksums"
     command: >
       postgres
@@ -52,10 +47,8 @@ services:
         limits:
           cpus: '1.0'
           memory: 2048M
-    # Add restart policy to keep postgres running
     restart: unless-stopped
 
-  # FL Server
   server:
     image: xfl-rpilab-client:latest
     container_name: xfl-server
@@ -83,7 +76,6 @@ services:
           cpus: '2.0'
           memory: 2048M
 
-  # Dashboard
   dashboard:
     image: xfl-rpilab-client:latest
     container_name: xfl-dashboard
@@ -111,8 +103,7 @@ services:
     
     # Generate client services
     for i in range(num_clients):
-        compose_content += f"""  # Client {i}
-  client-{i}:
+        compose_content += f"""  client-{i}:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-{i}
     command: python -m client.run_client_standalone --client-id {i} --server-host server --num-clients {num_clients} --batch-size 1024

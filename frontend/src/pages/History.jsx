@@ -22,7 +22,16 @@ function History() {
     // Set up polling interval - fetch every 5 seconds
     const interval = setInterval(fetchData, 5000);
     
-    return () => clearInterval(interval);
+    // Safety timeout to exit initial loading after 10 seconds max
+    const safetyTimeout = setTimeout(() => {
+      console.warn("Safety timeout: exiting initial loading state");
+      setInitialLoading(false);
+    }, 10000);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(safetyTimeout);
+    };
   }, []);
 
   const fetchData = async () => {
@@ -53,11 +62,14 @@ function History() {
         lossRes = { data: null };
       }
 
+      // FIXED: Always exit initial loading state after first successful fetch attempt
+      // This prevents getting stuck on "Loading..." even if no data exists yet
+      setInitialLoading(false);
+      
       // FIXED: Only update state if we have valid data with actual content - preserve existing data
       // History data - check for non-empty rounds array
       if (historyRes && historyRes.data && historyRes.data.rounds && historyRes.data.rounds.length > 0) {
         setHistory(historyRes.data.rounds);
-        setInitialLoading(false);
       }
       
       // Accuracy data - check for non-empty rounds array

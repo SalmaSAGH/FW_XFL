@@ -27,7 +27,8 @@ function Dashboard() {
   const [energyData, setEnergyData] = useState({ rounds: [], energy: [] });
   const [networkMetrics, setNetworkMetrics] = useState({ rounds: [], packet_loss: [], jitter: [] });
   const [history, setHistory] = useState([]);
-  const [strategy, setStrategy] = useState('all_layers');
+
+  // Strategy is now fetched from server status, no local state needed
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
   const [dataError, setDataError] = useState(false);
@@ -46,7 +47,16 @@ function Dashboard() {
     // Set up polling interval
     const interval = setInterval(fetchAllData, 2000);
     
-    return () => clearInterval(interval);
+    // Safety timeout to exit initial loading after 10 seconds max
+    const safetyTimeout = setTimeout(() => {
+      console.warn("Safety timeout: exiting initial loading state");
+      setInitialLoading(false);
+    }, 10000);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(safetyTimeout);
+    };
   }, []);
 
   const fetchAllData = async () => {
@@ -129,10 +139,13 @@ function Dashboard() {
         .some(res => res && res.data);
       
       setServerAvailable(anySuccess);
+      // Always exit initial loading state after first successful fetch attempt
+      // This prevents getting stuck on "Loading..." even if no data exists yet
+      setInitialLoading(false);
+      
       if (anySuccess) {
         setConsecutiveErrors(0);
         setLastSuccessfulFetch(new Date());
-        setInitialLoading(false);
       } else {
         setConsecutiveErrors(prev => prev + 1);
       }
@@ -140,10 +153,16 @@ function Dashboard() {
       // Update status only if we have valid status data
       if (statusRes && statusRes.data && Object.keys(statusRes.data).length > 0) {
         setStatus(statusRes.data);
-        // Sync strategy from server status
-        if (statusRes.data.xfl_strategy) {
-          setStrategy(statusRes.data.xfl_strategy);
-        }
+        // DEBUG: Log status to console for debugging round progress bar and client colors
+        console.log('[DEBUG] Status updated:', {
+          round_in_progress: statusRes.data.round_in_progress,
+          current_round: statusRes.data.current_round,
+          submissions_received: statusRes.data.submissions_received,
+          clients_expected: statusRes.data.clients_expected,
+          xfl_strategy: statusRes.data.xfl_strategy,
+          selected_clients: statusRes.data.selected_clients
+        });
+        // Strategy is now read directly from status.xfl_strategy in the render
       }
 
       // FIXED: Only update metrics data if we have valid data with actual content - preserve existing data
@@ -220,13 +239,15 @@ function Dashboard() {
     setLoading(false);
   };
 
-  const handleApplyStrategy = async () => {
+  const handleApplyStrategy = async (selectedStrategy) => {
     setLoading(true);
     setMessage({ type: '', text: '' });
     
     try {
-      await setXflStrategy(strategy, 3);
+      await setXflStrategy(selectedStrategy, 3);
       setMessage({ type: 'success', text: 'Strategy updated successfully!' });
+      // Force refresh to get updated strategy from server
+      fetchAllData();
     } catch (error) {
       setMessage({ type: 'error', text: 'Error updating strategy: ' + error.message });
     }
@@ -281,12 +302,13 @@ function Dashboard() {
     jitter: networkMetrics.jitter[idx]
   }));
 
-  // Get Pi card state
+  // Get Pi card state - map server states to UI states
+  // Server returns: "idle" (not selected), "training" (selected but not submitted), "active" (submitted)
   const getPiState = (client) => {
     if (status.round_in_progress) {
-      if (client.state === 'active') return 'active';
-      if (client.state === 'training') return 'training';
-      return 'selected';
+      if (client.state === 'active') return 'active';     // Green - already submitted
+      if (client.state === 'training') return 'training'; // Blue - selected, training in progress
+      return 'idle';                                    // Gray - not selected for this round
     }
     if (client.state === 'active') return 'active';
     return 'idle';
@@ -387,7 +409,9 @@ function Dashboard() {
           </div>
           <div className="info-card">
             <div className="info-label">XFL Strategy</div>
-            <div className="info-value" style={{ fontSize: '16px' }}>{status.xfl_strategy || 'all_layers'}</div>
+            <div className="info-value" style={{ fontSize: '16px' }}>
+              {status.xfl_strategy || 'all_layers'}
+            </div>
           </div>
         </div>
 
@@ -403,10 +427,10 @@ function Dashboard() {
             <div className="progress-bar-bg">
               <div 
                 className="progress-bar-fill" 
-                style={{ width: `${Math.round((status.submissions_received / status.clients_expected) * 100)}%` }}
+                style={{ width: `${status.clients_expected ? Math.round((status.submissions_received / status.clients_expected) * 100) : 0}%` }}
               ></div>
               <div className="progress-text">
-                {Math.round((status.submissions_received / status.clients_expected) * 100)}%
+                {status.clients_expected ? Math.round((status.submissions_received / status.clients_expected) * 100) : 0}%
               </div>
             </div>
           </div>
@@ -639,7 +663,7 @@ function Dashboard() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="5" style={{ textAlign: 'center', color: '#888' }}>
+                    <td colSpan={5} style={{ textAlign: 'center', color: '#888' }}>
                       No rounds yet
                     </td>
                   </tr>
