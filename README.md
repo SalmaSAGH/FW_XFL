@@ -7,11 +7,11 @@ Framework distribué et paramétrable pour l'évaluation expérimentale du Feder
 FW_XFL est un framework de Federated Learning (FL) layer-wise publié à l'origine par Rachid EL MOKADEM, Yann BEN MAISSA et Zineb EL AKKAOUI conçu pour fonctionner sur un testbed de Raspberry Pi. Il permet d'évaluer expérimentalement différentes stratégies de FL dans des conditions réalistes.
 
 ## 🎯 Objectifs
-
-- Évaluation expérimentale de stratégies FL layer-wise
-- Exécution sur hardware réel (Raspberry Pi)
-- Collecte automatique de métriques (système, réseau, apprentissage)
-- Génération de résultats scientifiques reproductibles
+PFE proposé par Yann BEN MAISSA (INPT). Le but est de développer un framework qui permet de :
+- Réaliser l’évaluation expérimentale de stratégies de Federated Learning (FL) layer-wise.
+- Exécuter et valider les expériences sur du hardware réel, notamment des dispositifs embarqués de type Raspberry Pi.
+- Assurer la collecte automatique de métriques système (CPU, mémoire, énergie), réseau (latence, bande passante) et d’apprentissage (accuracy, loss, convergence).
+- Générer des résultats scientifiques reproductibles grâce à une orchestration automatisée, un versioning du code et des configurations expérimentales.
 
 ## 🏗️ Architecture
 
