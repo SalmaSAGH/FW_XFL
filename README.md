@@ -16,9 +16,6 @@ A distributed and configurable framework for the experimental evaluation of **La
 - [Architecture](#-architecture)
 - [Installation](#-installation)
 - [Usage](#-usage)
-- [Metrics Collected](#-metrics-collected)
-- [Reproducibility](#-reproducibility)
-- [Citation](#-citation)
 - [Author](#-author)
 
 ---
@@ -92,7 +89,7 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-📊 Usage
+## 📊 Usage
 Current client implementation: Docker containers
 🐳 Docker Simulation Mode
 To test the current version:
@@ -100,7 +97,7 @@ To test the current version:
   docker-compose up
   ```
 
-👥 Author
+## 👥 Author
 
 - SAGHOUGH Salma
 - Supervisor: Mr. Yann BEN MAISSA
