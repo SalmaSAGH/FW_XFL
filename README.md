@@ -1,64 +1,106 @@
 # FW_XFL
 
-Framework distribué et paramétrable pour l'évaluation expérimentale du Federated Learning sur Raspberry Pi.
+![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
+![Docker](https://img.shields.io/badge/Docker-Required-blue)
+![Platform](https://img.shields.io/badge/Platform-Raspberry%20Pi-green)
+![License](https://img.shields.io/badge/License-Academic-lightgrey)
+
+A distributed and configurable framework for the experimental evaluation of **Layer-wise Federated Learning (FL)** on Raspberry Pi devices.
+
+---
+
+## 📑 Table of Contents
+
+- [Description](#-description)
+- [Objectives](#-objectives)
+- [Architecture](#-architecture)
+- [Installation](#-installation)
+- [Usage](#-usage)
+- [Metrics Collected](#-metrics-collected)
+- [Reproducibility](#-reproducibility)
+- [Citation](#-citation)
+- [Author](#-author)
+
+---
 
 ## 📋 Description
 
-FW_XFL est un framework de Federated Learning (FL) layer-wise publié à l'origine par Rachid EL MOKADEM, Yann BEN MAISSA et Zineb EL AKKAOUI conçu pour fonctionner sur un testbed de Raspberry Pi. Il permet d'évaluer expérimentalement différentes stratégies de FL dans des conditions réalistes.
+**FW_XFL** is a Layer-wise Federated Learning (FL) framework originally published by  
+Rachid EL MOKADEM, Yann BEN MAISSA, and Zineb EL AKKAOUI.
 
-## 🎯 Objectifs
-PFE proposé par Yann BEN MAISSA (INPT). Le but est de développer un framework qui permet de :
-- Réaliser l’évaluation expérimentale de stratégies de Federated Learning (FL) layer-wise.
-- Exécuter et valider les expériences sur du hardware réel, notamment des dispositifs embarqués de type Raspberry Pi.
-- Assurer la collecte automatique de métriques système (CPU, mémoire, énergie), réseau (latence, bande passante) et d’apprentissage (accuracy, loss, convergence).
-- Générer des résultats scientifiques reproductibles grâce à une orchestration automatisée, un versioning du code et des configurations expérimentales.
+It is designed to operate on a **Raspberry Pi testbed**, enabling realistic and reproducible experimental evaluation of Federated Learning strategies under real-world hardware constraints.
+
+The framework supports both:
+- 🧪 Real hardware experimentation (Raspberry Pi cluster)
+- 🐳 Docker-based simulation for scalability testing
+
+---
+
+## 🎯 Objectives
+
+This project is part of a Final Year Project (PFE) proposed by **Yann BEN MAISSA (INPT)**.
+
+The framework aims to:
+
+- Perform experimental evaluation of Layer-wise Federated Learning strategies  
+- Execute and validate experiments on real embedded devices (Raspberry Pi)  
+- Automatically collect:
+  - System metrics (CPU, memory, energy)
+  - Network metrics (latency, bandwidth)
+  - Learning metrics (accuracy, loss, convergence)
+- Ensure scientific reproducibility through:
+  - Automated orchestration
+  - Code versioning
+  - Experiment configuration management
+
+---
 
 ## 🏗️ Architecture
 
 ```
 XFL-RPiLab/
-├── config/          # Configuration des expériences
-├── server/          # Serveur central FL
-├── client/          # Client FL (Raspberry Pi)
-├── experiments/     # Orchestration des expériences
-├── dashboard/       # Visualisation (optionnel)
-└── logs/            # Logs et métriques
+├── config/ # Experiment configuration
+├── server/ # Central FL server
+├── client/ # FL client (Raspberry Pi)
+├── experiments/ # Experiment orchestration
+├── dashboard/ # Visualization (optional)
+└── logs/ # Logs and metrics
 ```
+
 
 ## 🚀 Installation
 
-### Prérequis
+### Prerequisites
 
 - Python 3.9+
-- Docker Desktop (pour simulation)
+- Docker Desktop (for simulation)
 
 ### Setup
 
 ```bash
-# Cloner le repository
+# Clone the repository
 git clone <your-repo-url>
 cd XFL-RPiLab
 
-# Créer l'environnement virtuel
+# Create virtual environment
 python -m venv venv
 
-# Activer l'environnement (Windows)
+# Activate environment (Windows)
 venv\Scripts\activate
 
-# Installer les dépendances
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-## 📊 Utilisation
-
-- Client actuel : Docker containers
-- Pour tester la version actuelle:
+📊 Usage
+Current client implementation: Docker containers
+🐳 Docker Simulation Mode
+To test the current version:
   ```bash
-  python run_docker_experiment.py
+  docker-compose up
   ```
 
-## 👥 Auteur
+👥 Author
 
-- **SAGHOUGH Salma**
-- Encadrant : Mr Yann BEN MAISSA
-
+- SAGHOUGH Salma
+- Supervisor: Mr. Yann BEN MAISSA
