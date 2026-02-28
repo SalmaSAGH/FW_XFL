@@ -21,14 +21,14 @@ federated_learning:
   
 # Dataset Configuration
 dataset:
-  name: "MNIST"  # MNIST, CIFAR10, FashionMNIST
+  name: "MNIST"  # MNIST, CIFAR10, FashionMNIST, CIFAR100, EMNIST
   data_distribution: "iid"  # iid or non_iid
   train_test_split: 0.8
-  batch_size: 512  # Augmenté pour RPi (moins de rounds réseau)
+  batch_size: 32  # Réduit pour plus de mises à jour par epoch
   
 # Model Configuration
 model:
-  name: "SimpleCNN"  # SimpleCNN, LeNet5
+  name: "SimpleCNN"  # SimpleCNN, LeNet5, CIFAR100CNN, EMNISTCNN
   input_shape: [1, 28, 28]  # [channels, height, width]
   num_classes: 10
   

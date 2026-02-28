@@ -603,9 +603,6 @@ function History() {
             <p style={{ marginBottom: '10px' }}>
               <strong style={{ color: '#4fc3f7' }}>XFL - Quantization:</strong> Model weights are quantized before transmission to reduce data size.
             </p>
-            <p>
-              <strong style={{ color: '#4fc3f7' }}>Importance Based:</strong> Selects top-K important layers based on gradient importance scores.
-            </p>
           </div>
         </div>
       </main>

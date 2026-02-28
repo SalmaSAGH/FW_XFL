@@ -9,6 +9,7 @@ function Config() {
     clientsPerRound: 5,
     numRounds: 50,
     dataset: 'MNIST',
+    model: 'SimpleCNN',
     dataDistribution: 'iid',
     strategy: 'all_layers',
     xflParam: 3,
@@ -90,16 +91,30 @@ function Config() {
     { value: 'xfl_cyclic', label: 'XFL - Cyclic' },
     { value: 'xfl_sparsification', label: 'XFL - Sparsification' },
     { value: 'xfl_quantization', label: 'XFL - Quantization' },
-    { value: 'importance_based', label: 'Importance Based' },
-    { value: 'layerwise', label: 'Layerwise' },
-    { value: 'adaptive', label: 'Adaptive' },
-    { value: 'split', label: 'Split Learning' },
   ];
 
+  // Dataset to model mapping - automatically selects appropriate model
+  const datasetModelMap = {
+    'MNIST': { model: 'SimpleCNN', numClasses: 10 },
+    'FashionMNIST': { model: 'SimpleCNN', numClasses: 10 },
+    'CIFAR10': { model: 'SimpleCNN', numClasses: 10 },
+    'CIFAR100': { model: 'CIFAR100CNN', numClasses: 100 },
+    'EMNIST': { model: 'EMNISTCNN', numClasses: 47 },
+  };
+
   const datasets = [
-    { value: 'MNIST', label: 'MNIST' },
-    { value: 'CIFAR10', label: 'CIFAR10' },
-    { value: 'FashionMNIST', label: 'FashionMNIST' },
+    { value: 'MNIST', label: 'MNIST (10 classes, 28x28 grayscale)' },
+    { value: 'FashionMNIST', label: 'FashionMNIST (10 classes, 28x28 grayscale)' },
+    { value: 'CIFAR10', label: 'CIFAR10 (10 classes, 32x32 RGB)' },
+    { value: 'CIFAR100', label: 'CIFAR100 (100 classes, 32x32 RGB)' },
+    { value: 'EMNIST', label: 'EMNIST (47 classes, 28x28 grayscale)' },
+  ];
+
+  const models = [
+    { value: 'SimpleCNN', label: 'SimpleCNN (MNIST, FashionMNIST, CIFAR10)' },
+    { value: 'CIFAR100CNN', label: 'CIFAR100CNN (CIFAR-100)' },
+    { value: 'EMNISTCNN', label: 'EMNISTCNN (EMNIST)' },
+    { value: 'LeNet5', label: 'LeNet5 (Legacy)' },
   ];
 
   return (

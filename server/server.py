@@ -952,12 +952,24 @@ def save_config():
         fl_server.clients_per_round = int(data['clientsPerRound'])
         print(f"✅ Updated clients_per_round to {fl_server.clients_per_round}")
     
+    # Also update the fl_config dictionary with the new clientsPerRound value
+    if 'clientsPerRound' in data:
+        fl_config['clientsPerRound'] = int(data['clientsPerRound'])
+        print(f"✅ Updated fl_config clientsPerRound to {fl_config['clientsPerRound']}")
+    
+    # Update numRounds in fl_server if it was changed
+    if fl_server is not None and 'numRounds' in data:
+        old_num_rounds = fl_server.num_rounds
+        fl_server.num_rounds = int(data['numRounds'])
+        fl_config['numRounds'] = int(data['numRounds'])
+        print(f"✅ Updated numRounds from {old_num_rounds} to {fl_server.num_rounds}")
+    
     return jsonify({"status": "success", "message": "Configuration saved", "config": fl_config})
 
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
-    """Get current FLLet me apply the edit configuration"""
+    """Get current FL configuration"""
     return jsonify({"config": fl_config})
 
 
@@ -1087,7 +1099,7 @@ def start_round():
     return jsonify(result)
 
 
-@app.route('/api/get_global_model', methods=['GET'])
+@ app.route('/api/get_global_model', methods=['GET'])
 def get_global_model():
     """Get current global model weights"""
     if fl_server is None:
@@ -1098,13 +1110,21 @@ def get_global_model():
 
     xfl_info = fl_server.aggregation_strategy.get_xfl_info()
 
+    # Get dataset name from fl_config (set by user in Config page)
+    dataset_name = fl_config.get('dataset', 'MNIST')
+    
+    # Get data distribution from fl_config
+    data_distribution = fl_config.get('dataDistribution', 'iid')
+
     return jsonify({
         "weights": weights_b64,
         "round": fl_server.current_round,
         "xfl_strategy": xfl_info['strategy'],
         "xfl_param": xfl_info['param'],
         "sparsification_threshold": xfl_info.get('sparsification_threshold', 0.01),
-        "quantization_bits": xfl_info.get('quantization_bits', 8)
+        "quantization_bits": xfl_info.get('quantization_bits', 8),
+        "dataset_name": dataset_name,
+        "data_distribution": data_distribution
     })
 
 
@@ -1587,10 +1607,18 @@ def create_server(
                     fl_config[key] = value
             print("✅ Loaded config from database")
             
-            # If user has explicitly set clientsPerRound in config, use it
+# If user has explicitly set clientsPerRound in config, use it
             if 'clientsPerRound' in saved_config:
                 fl_server.clients_per_round = int(saved_config['clientsPerRound'])
                 print(f"✅ Updated clients_per_round to {fl_server.clients_per_round} from saved config")
+            
+            # FIX: Update numRounds from saved config if it exists
+            # This ensures the dashboard displays the correct number of rounds
+            # even before any round is started
+            if 'numRounds' in saved_config:
+                old_num_rounds = fl_server.num_rounds
+                fl_server.num_rounds = int(saved_config['numRounds'])
+                print(f"✅ Updated numRounds from {old_num_rounds} to {fl_server.num_rounds} from saved config")
             
             # CRITICAL FIX: Load and apply the XFL strategy from saved config on startup
             # This ensures the strategy persists across server restarts

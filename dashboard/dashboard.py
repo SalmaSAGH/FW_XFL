@@ -67,14 +67,13 @@ class DashboardServer:
         def get_status():
             """Get current experiment status with XFL info"""
             try:
-                # Try to get NUM_CLIENTS from server first, then fall back to environment variable
+                # Get clients_expected from server status (this is clients_per_round from config)
                 expected_clients = None
                 try:
                     import requests
                     server_status = requests.get('http://server:5000/api/status', timeout=10).json()
-                    # Get clients_expected from server status if available
-                    # This is the clients_per_round value from the server
-                    clients_per_round = server_status.get('clients_expected', None)
+                    # Get clients_expected from server status - this is the clientsPerRound configured value
+                    expected_clients = server_status.get('clients_expected', None)
                 except:
                     pass
                 

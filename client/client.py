@@ -13,6 +13,8 @@ import torch
 
 from .trainer import LocalTrainer
 from .metrics import MetricsCollector
+from .model import create_model
+from .dataset import create_dataloaders
 
 # Import gc for garbage collection
 import gc
@@ -34,7 +36,12 @@ class FLClient:
         local_epochs: int = 1,
         timeout: int = 300,
         sparsification_threshold: float = 0.01,
-        quantization_bits: int = 8
+        quantization_bits: int = 8,
+        dataset_name: str = "MNIST",
+        num_clients: int = 40,
+        batch_size: int = 32,
+        distribution: str = "iid",
+        data_dir: str = "./data"
     ):
         self.client_id = client_id
         self.model = model
@@ -49,6 +56,16 @@ class FLClient:
         # XFL compression parameters
         self.sparsification_threshold = sparsification_threshold
         self.quantization_bits = quantization_bits
+
+        # Dataset configuration - will be updated from server
+        self.dataset_name = dataset_name
+        self.num_clients = num_clients
+        self.batch_size = batch_size
+        self.distribution = distribution
+        self.data_dir = data_dir
+        self.current_dataset_name = dataset_name  # Track current dataset
+        self.current_model_name = "SimpleCNN"  # Track current model
+        self.current_distribution = distribution  # Track current distribution
 
         # Initialize trainer
         self.trainer = LocalTrainer(
@@ -87,6 +104,81 @@ class FLClient:
         weights_bytes = base64.b64decode(base64_str.encode('utf-8'))
         return pickle.loads(weights_bytes)
     
+    def _get_model_for_dataset(self, dataset_name: str) -> Tuple[str, int]:
+        """Get appropriate model and num_classes for a dataset"""
+        dataset_model_map = {
+            'MNIST': ('SimpleCNN', 10),
+            'FashionMNIST': ('SimpleCNN', 10),
+            'CIFAR10': ('SimpleCNN', 10),
+            'CIFAR100': ('CIFAR100CNN', 100),
+            'EMNIST': ('EMNISTCNN', 47),
+        }
+        return dataset_model_map.get(dataset_name, ('SimpleCNN', 10))
+    
+    def reload_data_if_needed(self, dataset_name: str, distribution: str = None, verbose: bool = False) -> bool:
+        """Reload data if dataset or distribution changed from server config"""
+        needs_reload = False
+        
+        # Check if dataset changed
+        if dataset_name != self.current_dataset_name:
+            needs_reload = True
+            if verbose:
+                print(f"Client {self.client_id}: Dataset changed from {self.current_dataset_name} to {dataset_name}")
+        
+        # Check if distribution changed
+        if distribution is not None and distribution != self.current_distribution:
+            needs_reload = True
+            if verbose:
+                print(f"Client {self.client_id}: Distribution changed from {self.current_distribution} to {distribution}")
+        
+        if not needs_reload:
+            return False
+        
+        # Update dataset and distribution
+        if dataset_name != self.current_dataset_name:
+            model_name, num_classes = self._get_model_for_dataset(dataset_name)
+            
+            if verbose:
+                print(f"Client {self.client_id}: Creating new model {model_name} with {num_classes} classes")
+            
+            self.model = create_model(model_name, num_classes=num_classes)
+            
+            self.trainer = LocalTrainer(
+                model=self.model,
+                optimizer_name="sgd",
+                learning_rate=0.01,
+                momentum=0.9,
+                weight_decay=0.0001
+            )
+            
+            self.current_dataset_name = dataset_name
+            self.current_model_name = model_name
+        
+        # Update distribution if changed
+        if distribution is not None:
+            self.distribution = distribution
+            self.current_distribution = distribution
+        
+        if verbose:
+            print(f"Client {self.client_id}: Loading new dataset {dataset_name} with distribution {self.distribution}...")
+        
+        client_loaders, _ = create_dataloaders(
+            dataset_name=self.current_dataset_name,
+            num_clients=self.num_clients,
+            batch_size=self.batch_size,
+            distribution=self.distribution,
+            data_dir=self.data_dir,
+            seed=42
+        )
+        
+        self.train_loader = client_loaders[self.client_id]
+        
+        if verbose:
+            print(f"Client {self.client_id}: Data reloaded ({len(self.train_loader.dataset)} samples)")
+        
+        self._cleanup_memory()
+        return True
+    
     def participate_in_round(self, verbose: bool = False) -> bool:
         """
         Participate in one FL round - SPEED OPTIMIZED with XFL support
@@ -111,10 +203,15 @@ class FLClient:
             current_round = data['round']
             xfl_strategy = data.get('xfl_strategy', 'all_layers')
             xfl_param = data.get('xfl_param', 3)
+            
+            # NEW: Get dataset_name and data_distribution from server and reload data if needed
+            server_dataset = data.get('dataset_name', 'MNIST')
+            server_distribution = data.get('data_distribution', 'iid')
+            self.reload_data_if_needed(server_dataset, server_distribution, verbose)
 
             if verbose:
                 print(f"Client {self.client_id}: Round {current_round} - Model downloaded")
-                print(f"   XFL Strategy: {xfl_strategy}")
+                print(f"   XFL Strategy: {xfl_strategy}, Dataset: {server_dataset}, Distribution: {server_distribution}")
 
             # Step 2: Update local model
             self.trainer.set_model_weights(weights)

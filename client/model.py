@@ -143,12 +143,176 @@ class LeNet5(nn.Module):
         self.load_state_dict(current_state, strict=False)
 
 
+class CIFAR100CNN(nn.Module):
+    """
+    CNN for CIFAR-100 (100 classes, 32x32 RGB images)
+    Deeper architecture suitable for more complex classification
+    """
+    def __init__(self, num_classes: int = 100):
+        super(CIFAR100CNN, self).__init__()
+        
+        # Convolutional layers
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(64)
+        
+        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(128)
+        
+        self.conv3 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
+        self.bn3 = nn.BatchNorm2d(256)
+        
+        self.conv4 = nn.Conv2d(256, 512, kernel_size=3, padding=1)
+        self.bn4 = nn.BatchNorm2d(512)
+        
+        # Pooling and dropout
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        self.dropout = nn.Dropout(0.5)
+        
+        # After 3 poolings: 32 -> 16 -> 8 -> 4
+        self.fc1 = nn.Linear(512 * 4 * 4, 1024)
+        self.fc2 = nn.Linear(1024, 512)
+        self.fc3 = nn.Linear(512, num_classes)
+        
+    def forward(self, x):
+        # Conv block 1
+        x = self.pool(F.relu(self.bn1(self.conv1(x))))  # 32 -> 16
+        
+        # Conv block 2
+        x = self.pool(F.relu(self.bn2(self.conv2(x))))  # 16 -> 8
+        
+        # Conv block 3
+        x = self.pool(F.relu(self.bn3(self.conv3(x))))  # 8 -> 4
+        
+        # Conv block 4
+        x = self.pool(F.relu(self.bn4(self.conv4(x))))  # 4 -> 2
+        
+        # Flatten
+        x = x.view(-1, 512 * 4 * 4)
+        
+        # Fully connected layers
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = F.relu(self.fc2(x))
+        x = self.dropout(x)
+        x = self.fc3(x)
+        
+        return x
+    
+    def get_layer_names(self) -> List[str]:
+        """Get list of layer names for layer-wise strategies"""
+        return [name for name, _ in self.named_parameters()]
+    
+    def get_layer_weights(self, layer_names: List[str] = None) -> OrderedDict:
+        """Get weights of specific layers"""
+        if layer_names is None:
+            return self.state_dict()
+        
+        state_dict = self.state_dict()
+        selected_weights = OrderedDict()
+        
+        for name in layer_names:
+            if name in state_dict:
+                selected_weights[name] = state_dict[name]
+            else:
+                print(f"⚠️  Warning: Layer '{name}' not found in model")
+        
+        return selected_weights
+    
+    def set_layer_weights(self, weights: OrderedDict):
+        """Update specific layer weights"""
+        current_state = self.state_dict()
+        
+        for name, param in weights.items():
+            if name in current_state:
+                current_state[name] = param
+            else:
+                print(f"⚠️  Warning: Layer '{name}' not found in model, skipping")
+        
+        self.load_state_dict(current_state, strict=False)
+
+
+class EMNISTCNN(nn.Module):
+    """
+    CNN for EMNIST (47 classes, 28x28 grayscale images)
+    Similar to SimpleCNN but adapted for more classes
+    """
+    def __init__(self, num_classes: int = 47):
+        super(EMNISTCNN, self).__init__()
+        
+        # Convolutional layers
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
+        
+        # Pooling layer
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+        
+        # After 2 poolings: 28 -> 14 -> 7
+        self.fc1 = nn.Linear(128 * 7 * 7, 256)
+        self.fc2 = nn.Linear(256, num_classes)
+        
+        # Dropout for regularization
+        self.dropout = nn.Dropout(0.5)
+        
+    def forward(self, x):
+        # Conv block 1
+        x = self.pool(F.relu(self.conv1(x)))  # -> [batch, 32, 14, 14]
+        
+        # Conv block 2
+        x = self.pool(F.relu(self.conv2(x)))  # -> [batch, 64, 7, 7]
+        
+        # Conv block 3
+        x = self.pool(F.relu(self.conv3(x)))  # -> [batch, 128, 3, 3]
+        
+        # Flatten
+        x = x.view(-1, 128 * 7 * 7)
+        
+        # Fully connected layers
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = self.fc2(x)
+        
+        return x
+    
+    def get_layer_names(self) -> List[str]:
+        """Get list of layer names for layer-wise strategies"""
+        return [name for name, _ in self.named_parameters()]
+    
+    def get_layer_weights(self, layer_names: List[str] = None) -> OrderedDict:
+        """Get weights of specific layers"""
+        if layer_names is None:
+            return self.state_dict()
+        
+        state_dict = self.state_dict()
+        selected_weights = OrderedDict()
+        
+        for name in layer_names:
+            if name in state_dict:
+                selected_weights[name] = state_dict[name]
+            else:
+                print(f"⚠️  Warning: Layer '{name}' not found in model")
+        
+        return selected_weights
+    
+    def set_layer_weights(self, weights: OrderedDict):
+        """Update specific layer weights"""
+        current_state = self.state_dict()
+        
+        for name, param in weights.items():
+            if name in current_state:
+                current_state[name] = param
+            else:
+                print(f"⚠️  Warning: Layer '{name}' not found in model, skipping")
+        
+        self.load_state_dict(current_state, strict=False)
+
+
 def create_model(model_name: str, num_classes: int = 10) -> nn.Module:
     """
     Factory function to create models
     
     Args:
-        model_name: Name of the model (SimpleCNN, LeNet5)
+        model_name: Name of the model (SimpleCNN, LeNet5, CIFAR100CNN, EMNISTCNN)
         num_classes: Number of output classes
         
     Returns:
@@ -156,7 +320,9 @@ def create_model(model_name: str, num_classes: int = 10) -> nn.Module:
     """
     models = {
         "SimpleCNN": SimpleCNN,
-        "LeNet5": LeNet5
+        "LeNet5": LeNet5,
+        "CIFAR100CNN": CIFAR100CNN,
+        "EMNISTCNN": EMNISTCNN
     }
     
     if model_name not in models:
