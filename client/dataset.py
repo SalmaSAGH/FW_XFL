@@ -124,7 +124,7 @@ def load_dataset(
     Load a dataset from torchvision
     
     Args:
-        dataset_name: Name of dataset (MNIST, CIFAR10, FashionMNIST)
+        dataset_name: Name of dataset (MNIST, CIFAR10, FashionMNIST, CIFAR100, EMNIST)
         data_dir: Directory to store/load data
         train: If True, load training set; else test set
         
@@ -134,13 +134,21 @@ def load_dataset(
     # Create data directory if it doesn't exist
     Path(data_dir).mkdir(parents=True, exist_ok=True)
     
-    # Define transforms
+    # Define transforms based on dataset type
     if dataset_name in ["MNIST", "FashionMNIST"]:
+        # Grayscale 28x28 images
         transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize((0.1307,), (0.3081,))  # MNIST mean and std
         ])
+    elif dataset_name == "EMNIST":
+        # EMNIST is similar to MNIST but with letters + digits (47 classes)
+        transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize((0.1307,), (0.3081,))  # Same as MNIST
+        ])
     elif dataset_name == "CIFAR10":
+        # RGB 32x32 images
         if train:
             transform = transforms.Compose([
                 transforms.RandomCrop(32, padding=4),
@@ -155,26 +163,65 @@ def load_dataset(
                 transforms.Normalize((0.4914, 0.4822, 0.4465), 
                                    (0.2023, 0.1994, 0.2010))
             ])
+    elif dataset_name == "CIFAR100":
+        # CIFAR-100: 100 classes, RGB 32x32 images
+        if train:
+            transform = transforms.Compose([
+                transforms.RandomCrop(32, padding=4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                transforms.Normalize((0.5071, 0.4867, 0.4408), 
+                                   (0.2675, 0.2565, 0.2761))
+            ])
+        else:
+            transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize((0.5071, 0.4867, 0.4408), 
+                                   (0.2675, 0.2565, 0.2761))
+            ])
     else:
         raise ValueError(f"Unknown dataset: {dataset_name}")
     
-    # Load dataset
+    # Load dataset - EMNIST has 'split' parameter for different splits
     dataset_map = {
         "MNIST": datasets.MNIST,
         "FashionMNIST": datasets.FashionMNIST,
-        "CIFAR10": datasets.CIFAR10
+        "CIFAR10": datasets.CIFAR10,
+        "CIFAR100": datasets.CIFAR100,
+        "EMNIST": datasets.EMNIST
     }
     
-    dataset_class = dataset_map[dataset_name]
-    dataset = dataset_class(
-        root=data_dir,
-        train=train,
-        download=True,
-        transform=transform
-    )
+    if dataset_name == "EMNIST":
+        # EMNIST: 'byclass' split includes all classes (47 classes)
+        dataset = dataset_map[dataset_name](
+            root=data_dir,
+            train=train,
+            download=True,
+            transform=transform,
+            split='byclass'  # byclass, bymerge, balanced, letters, digits, mnist
+        )
+    elif dataset_name == "CIFAR100":
+        dataset = dataset_map[dataset_name](
+            root=data_dir,
+            train=train,
+            download=True,
+            transform=transform
+        )
+    else:
+        dataset = dataset_map[dataset_name](
+            root=data_dir,
+            train=train,
+            download=True,
+            transform=transform
+        )
     
     split_name = "training" if train else "test"
     print(f"✅ {dataset_name} {split_name} set loaded: {len(dataset)} samples")
+    
+    # Print number of classes for information
+    if hasattr(dataset, 'classes'):
+        num_classes = len(dataset.classes)
+        print(f"   📊 Number of classes: {num_classes}")
     
     return dataset
 
