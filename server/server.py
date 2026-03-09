@@ -1538,6 +1538,181 @@ def get_rounds_history():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/history_by_strategy', methods=['GET'])
+def get_history_by_strategy():
+    """
+    Get history data grouped by strategy and experiments/sessions.
+    Returns:
+    - List of strategies used
+    - For each strategy: list of experiments (sessions)
+    - Each experiment: rounds data, accuracy evolution, config used
+    """
+    try:
+        conn = psycopg2.connect(DB_URL)
+        cursor = conn.cursor()
+
+        # First, get all distinct strategies used
+        cursor.execute("""
+            SELECT DISTINCT strategy 
+            FROM round_metrics 
+            WHERE strategy IS NOT NULL AND global_test_accuracy IS NOT NULL
+            ORDER BY strategy
+        """)
+        strategies = [row[0] for row in cursor.fetchall()]
+        
+        # If no strategies found, return empty data
+        if not strategies:
+            conn.close()
+            return jsonify({
+                "strategies": [],
+                "message": "No completed rounds found"
+            })
+
+        # For each strategy, find experiments (sessions) - continuous sequences of rounds
+        # An experiment ends when there's a gap in rounds or strategy changes
+        result = []
+        
+        for strategy in strategies:
+            # Get all completed rounds for this strategy, ordered by round_number
+            cursor.execute("""
+                SELECT round_number, global_test_accuracy, global_test_loss, 
+                       aggregation_time_sec, num_clients, timestamp, metrics_json
+                FROM round_metrics
+                WHERE strategy = %s AND global_test_accuracy IS NOT NULL
+                ORDER BY round_number
+            """, (strategy,))
+            
+            rounds_data = cursor.fetchall()
+            
+            # Group rounds into experiments (sessions)
+            # A new session starts when there's a gap > 1 in round numbers
+            experiments = []
+            current_experiment = {
+                "experiment_id": 1,
+                "rounds": [],
+                "accuracy_evolution": [],
+                "loss_evolution": [],
+                "config": None
+            }
+            
+            for idx, row in enumerate(rounds_data):
+                round_num = row[0]
+                accuracy = round(row[1], 2) if row[1] else None
+                loss = round(row[2], 4) if row[2] else None
+                agg_time = round(row[3], 2) if row[3] else None
+                num_clients = row[4]
+                timestamp = row[5]
+                metrics_json = row[6]
+                
+                # Check if this is a new experiment (gap in round numbers)
+                if idx > 0 and round_num - rounds_data[idx-1][0] > 1:
+                    # Save current experiment and start a new one
+                    experiments.append(current_experiment)
+                    current_experiment = {
+                        "experiment_id": len(experiments) + 1,
+                        "rounds": [],
+                        "accuracy_evolution": [],
+                        "loss_evolution": [],
+                        "config": None
+                    }
+                
+                # Add round data
+                current_experiment["rounds"].append({
+                    "round": round_num,
+                    "accuracy": accuracy,
+                    "loss": loss,
+                    "agg_time": agg_time,
+                    "clients": num_clients,
+                    "timestamp": timestamp
+                })
+                
+                if accuracy is not None:
+                    current_experiment["accuracy_evolution"].append({
+                        "round": round_num,
+                        "accuracy": accuracy
+                    })
+                
+                if loss is not None:
+                    current_experiment["loss_evolution"].append({
+                        "round": round_num,
+                        "loss": loss
+                    })
+            
+            # Don't forget the last experiment
+            experiments.append(current_experiment)
+            
+            # For each experiment, get the config that was active at the start
+            for exp in experiments:
+                if exp["rounds"]:
+                    first_round = exp["rounds"][0]["round"]
+                    # Get config from fl_config table at approximately that time
+                    # We'll get the latest config before or at that round
+                    cursor.execute("""
+                        SELECT config_key, config_value 
+                        FROM fl_config
+                        ORDER BY updated_at
+                    """)
+                    config_rows = cursor.fetchall()
+                    
+                    config_dict = {}
+                    for key, value in config_rows:
+                        # Try to convert to appropriate type
+                        if value and value.isdigit():
+                            config_dict[key] = int(value)
+                        else:
+                            try:
+                                config_dict[key] = float(value)
+                            except:
+                                config_dict[key] = value
+                    
+                    exp["config"] = config_dict
+
+            # Calculate statistics for each experiment
+            for exp in experiments:
+                if exp["rounds"]:
+                    accuracies = [r["accuracy"] for r in exp["rounds"] if r["accuracy"] is not None]
+                    losses = [r["loss"] for r in exp["rounds"] if r["loss"] is not None]
+                    agg_times = [r["agg_time"] for r in exp["rounds"] if r["agg_time"] is not None]
+                    
+                    exp["stats"] = {
+                        "total_rounds": len(exp["rounds"]),
+                        "best_accuracy": max(accuracies) if accuracies else None,
+                        "final_accuracy": accuracies[-1] if accuracies else None,
+                        "avg_loss": sum(losses) / len(losses) if losses else None,
+                        "avg_agg_time": sum(agg_times) / len(agg_times) if agg_times else None,
+                        "first_round": exp["rounds"][0]["round"],
+                        "last_round": exp["rounds"][-1]["round"]
+                    }
+                else:
+                    exp["stats"] = {
+                        "total_rounds": 0,
+                        "best_accuracy": None,
+                        "final_accuracy": None,
+                        "avg_loss": None,
+                        "avg_agg_time": None,
+                        "first_round": 0,
+                        "last_round": 0
+                    }
+
+            # Add strategy info to result
+            result.append({
+                "strategy": strategy,
+                "experiments": experiments,
+                "total_experiments": len(experiments),
+                "total_rounds": sum(len(exp["rounds"]) for exp in experiments)
+            })
+
+        conn.close()
+        
+        return jsonify({
+            "strategies": result
+        })
+
+    except Exception as e:
+        print(f"Error in /api/history_by_strategy: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint to verify database connectivity"""
