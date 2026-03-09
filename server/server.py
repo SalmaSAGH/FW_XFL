@@ -883,6 +883,7 @@ fl_server: FLServer = None
 fl_config = {
     "numClients": 40,
     "numRounds": 50,
+    "clientsPerRound": 5,
     "dataset": "MNIST",
     "dataDistribution": "iid",
     "strategy": "all_layers",
@@ -890,6 +891,13 @@ fl_config = {
     "localEpochs": 2,
     "batchSize": 512,
     "learningRate": 0.01,
+    # Network Parameters
+    "networkLatency": 0,
+    "networkBandwidth": 10,
+    "networkPacketLoss": 0,
+    # System Parameters
+    "cpuLimit": 100,
+    "ramLimit": 2048,
 }
 
 # Initialize database at startup

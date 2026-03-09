@@ -40,40 +40,33 @@ training:
   weight_decay: 0.0001
 
 # ============================================================================
-# XFL CONFIGURATION (NOUVEAU)
+# XFL CONFIGURATION
 # ============================================================================
 xfl:
   # Stratégie d'agrégation
-  # Options: "fedavg", "fedavg_xfl", "layerwise_xfl", "adaptive_xfl", "split_xfl"
-  aggregation_strategy: "fedavg_xfl"  # RECOMMANDÉ pour production
+  # Options: "fedavg", "xfl_cyclic", "xfl_sparsification", "xfl_quantization"
+  aggregation_strategy: "fedavg"
   
   # Configuration XFL
-  # Options: "all_layers", "importance_based", "layerwise", "adaptive", "split"
-  xfl_strategy: "importance_based"
+  # Options valides:
+  #   - "all_layers": FedAvg standard (toutes les couches)
+  #   - "xfl_cyclic": XFL cyclique (1 couche par client par tour)
+  #   - "xfl_sparsification": XFL avec sparsification
+  #   - "xfl_quantization": XFL avec quantification
+  xfl_strategy: "all_layers"
   
-  # Paramètre XFL
-  # - Pour importance_based: nombre de top-K couches à analyser (3-5 recommandé)
-  # - Pour layerwise: nombre de couches actives
-  # - Pour adaptive: K initial avant adaptation
-  # - Pour split: point de split (nombre de couches client)
-  xfl_param: 3
-  
-  # Tracking des métriques d'importance
+  # Tracking des métriques
   track_metrics: true
   
-  # Pour LayerWise-XFL seulement
-  freeze_threshold: 0.3  # Seuil pour geler les couches (0.0-1.0)
+  # Seuil de sparsification (pour xfl_sparsification)
+  sparsification_threshold: 0.01
   
-  # Export des métriques XFL
+  # Bits de quantification (pour xfl_quantization)
+  quantization_bits: 8
+  
+  # Export des métriques
   export_layer_metrics: true
   export_format: "csv"  # csv, json
-  
-# ============================================================================
-# LAYER-WISE STRATEGY (LEGACY - utiliser xfl à la place)
-# ============================================================================
-strategy:
-  type: "all_layers"  # DÉPRÉCIÉ - utiliser xfl.xfl_strategy
-  num_layers: null  # DÉPRÉCIÉ - utiliser xfl.xfl_param
   
 # Network Constraints (Simulation - pour Docker uniquement)
 # Pour Raspberry Pi réels, ces contraintes seront naturelles
@@ -100,7 +93,7 @@ monitoring:
 server:
   host: "0.0.0.0"  # Écouter sur toutes les interfaces pour RPi
   port: 5000
-  aggregation_method: "fedavg"  # DÉPRÉCIÉ - utiliser xfl.aggregation_strategy
+  aggregation_method: "fedavg"
 
   # Base de données des métriques
   metrics_db_url: "postgresql://postgres:newpassword@localhost:5432/xfl_metrics"
@@ -122,39 +115,13 @@ paths:
   results_dir: "./results"
   
 # ============================================================================
-# PRESETS D'EXPÉRIMENTATION (OPTIONNEL)
-# ============================================================================
-# Décommenter pour utiliser un preset prédéfini
-# preset: "quick_test"  # quick_test, short_experiment, standard_experiment, full_experiment
-
-# ============================================================================
 # NOTES D'UTILISATION
 # ============================================================================
 # 
-# 1. Configuration Recommandée (Production):
-#    xfl.aggregation_strategy: "fedavg_xfl"
-#    xfl.xfl_strategy: "importance_based"
-#    xfl.xfl_param: 3
-#
-# 2. Baseline (Sans XFL):
-#    xfl.aggregation_strategy: "fedavg"
-#    xfl.track_metrics: false
-#
-# 3. Expérimental (LayerWise):
-#    xfl.aggregation_strategy: "layerwise_xfl"
-#    xfl.xfl_strategy: "layerwise"
-#    xfl.xfl_param: 2
-#    xfl.freeze_threshold: 0.3
-#
-# 4. Expérimental (Adaptive):
-#    xfl.aggregation_strategy: "adaptive_xfl"
-#    xfl.xfl_strategy: "adaptive"
-#    xfl.xfl_param: 3
-#    federated_learning.num_rounds: 50  # Minimum recommandé
-#
-# 5. Split Learning (Privacy/Bandwidth):
-#    xfl.aggregation_strategy: "split_xfl"
-#    xfl.xfl_strategy: "split"
-#    xfl.xfl_param: 2  # Point de split
+# Stratégies disponibles:
+#   - all_layers: FedAvg standard (toutes les couches)
+#   - xfl_cyclic: XFL cyclique (1 couche par client par tour)
+#   - xfl_sparsification: XFL avec sparsification (envoie seulement les valeurs importantes)
+#   - xfl_quantization: XFL avec quantification (réduit la bande passante)
 #
 # ============================================================================

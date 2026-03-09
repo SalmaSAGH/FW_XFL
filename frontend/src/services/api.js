@@ -62,5 +62,6 @@ export const getLatencyData = () => api.get('/latency');
 export const getEnergyData = () => api.get('/energy');
 export const getNetworkMetricsData = () => api.get('/network_metrics');
 export const getRoundsHistory = () => api.get('/rounds_history');
+export const getHistoryByStrategy = () => api.get('/history_by_strategy');
 
 export default api;
