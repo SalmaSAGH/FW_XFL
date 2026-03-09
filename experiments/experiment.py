@@ -127,7 +127,11 @@ class ExperimentOrchestrator:
         
         server_url = f"http://{self.config.server.host}:{self.config.server.port}"
         
-        for client_id in range(self.config.federated_learning.clients_per_round):
+        # Create ALL clients (num_clients) not just clients_per_round
+        # This ensures all 40 clients are available for the server to select from
+        num_clients = self.config.federated_learning.num_clients
+        
+        for client_id in range(num_clients):
             # Create a copy of the model for this client
             client_model = create_model(
                 model_name=self.config.model.name,
@@ -149,13 +153,14 @@ class ExperimentOrchestrator:
             )
             
             self.clients.append(fl_client)
-            print(f"   ✅ Client {client_id} created")
+            if client_id % 10 == 0 or client_id == num_clients - 1:
+                print(f"   ✅ Client {client_id} created")
         
-        print(f"\n✅ {len(self.clients)} clients created")
+        print(f"\n✅ {len(self.clients)} clients created (all {num_clients} clients)")
     
     def run_round(self, round_num: int):
         """
-        Run one FL round
+        Run one FL round - Only selected clients participate
         
         Args:
             round_num: Current round number
@@ -172,15 +177,22 @@ class ExperimentOrchestrator:
             response = requests.post(f"{server_url}/start_round", timeout=10)
             result = response.json()
             print(f"   Server status: {result.get('status')}")
+            
+            # Get the list of selected clients from server response
+            selected_clients = result.get('selected_clients', [])
+            print(f"   Selected clients: {selected_clients}")
+            
         except Exception as e:
             print(f"   ❌ Error starting round: {e}")
             return False
         
-        # Run clients in parallel
-        print(f"\n🚀 Running {len(self.clients)} clients in parallel...")
+        # Only run selected clients in parallel
+        print(f"\n🚀 Running {len(selected_clients)} selected clients in parallel...")
         
         client_threads = []
-        for client in self.clients:
+        selected_client_objects = [self.clients[client_id] for client_id in selected_clients]
+        
+        for client in selected_client_objects:
             thread = threading.Thread(
                 target=client.participate_in_round,
                 kwargs={"verbose": False},
@@ -189,10 +201,10 @@ class ExperimentOrchestrator:
             thread.start()
             client_threads.append(thread)
         
-        # Wait for all clients to finish
-        for i, thread in enumerate(client_threads):
+        # Wait for all selected clients to finish
+        for client_id, thread in zip(selected_clients, client_threads):
             thread.join()
-            print(f"   ✅ Client {i} completed")
+            print(f"   ✅ Client {client_id} completed")
         
         # Wait a bit for server to aggregate
         time.sleep(2)

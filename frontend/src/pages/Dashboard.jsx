@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { 
   getStatus, 
+  getConfig,
   getAccuracyData, 
   getLossData, 
   getClientsData, 
@@ -19,6 +20,7 @@ import {
 function Dashboard() {
   const navigate = useNavigate();
   const [status, setStatus] = useState({});
+  const [config, setConfig] = useState({});
   const [accuracyData, setAccuracyData] = useState({ rounds: [], accuracy: [] });
   const [lossData, setLossData] = useState({ rounds: [], loss: [] });
   const [clients, setClients] = useState([]);
@@ -132,6 +134,15 @@ function Dashboard() {
       } catch (e) {
         console.warn('History fetch failed:', e.message);
         historyRes = { data: null };
+      }
+      
+      try {
+        const configRes = await getConfig();
+        if (configRes && configRes.data && configRes.data.config) {
+          setConfig(configRes.data.config);
+        }
+      } catch (e) {
+        console.warn('Config fetch failed:', e.message);
       }
 
       // Server is available if at least one API call succeeded
@@ -411,6 +422,40 @@ function Dashboard() {
             <div className="info-label">XFL Strategy</div>
             <div className="info-value" style={{ fontSize: '16px' }}>
               {status.xfl_strategy || 'all_layers'}
+            </div>
+          </div>
+        </div>
+
+        {/* Current Configuration Parameters Display */}
+        <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #ab47bc' }}>
+          <h2 className="panel-title">⚙️ Current Configuration</h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px', marginTop: '15px' }}>
+            {/* Algorithmic Parameters */}
+            <div style={{ padding: '10px', background: 'rgba(171, 71, 188, 0.1)', borderRadius: '4px' }}>
+              <div style={{ fontSize: '12px', fontWeight: '600', color: '#ab47bc', marginBottom: '8px' }}>🔧 Algorithmic</div>
+              <div style={{ fontSize: '11px', color: '#888' }}>Strategy: <span style={{ color: '#fff' }}>{config.strategy || 'all_layers'}</span></div>
+              <div style={{ fontSize: '11px', color: '#888' }}>XFL Param: <span style={{ color: '#fff' }}>{config.xflParam || 3}</span></div>
+            </div>
+            {/* Network Parameters */}
+            <div style={{ padding: '10px', background: 'rgba(79, 195, 247, 0.1)', borderRadius: '4px' }}>
+              <div style={{ fontSize: '12px', fontWeight: '600', color: '#4fc3f7', marginBottom: '8px' }}>🌐 Network</div>
+              <div style={{ fontSize: '11px', color: '#888' }}>Latency: <span style={{ color: '#fff' }}>{config.networkLatency || 0}ms</span></div>
+              <div style={{ fontSize: '11px', color: '#888' }}>Bandwidth: <span style={{ color: '#fff' }}>{config.networkBandwidth || 10}Mbps</span></div>
+              <div style={{ fontSize: '11px', color: '#888' }}>Packet Loss: <span style={{ color: '#fff' }}>{config.networkPacketLoss || 0}%</span></div>
+            </div>
+            {/* System Parameters */}
+            <div style={{ padding: '10px', background: 'rgba(255, 167, 38, 0.1)', borderRadius: '4px' }}>
+              <div style={{ fontSize: '12px', fontWeight: '600', color: '#ffa726', marginBottom: '8px' }}>💻 System</div>
+              <div style={{ fontSize: '11px', color: '#888' }}>CPU Limit: <span style={{ color: '#fff' }}>{config.cpuLimit || 100}%</span></div>
+              <div style={{ fontSize: '11px', color: '#888' }}>RAM Limit: <span style={{ color: '#fff' }}>{config.ramLimit || 2048}MB</span></div>
+              <div style={{ fontSize: '11px', color: '#888' }}>Clients: <span style={{ color: '#fff' }}>{config.numClients || 40}</span></div>
+            </div>
+            {/* Data Parameters */}
+            <div style={{ padding: '10px', background: 'rgba(102, 187, 106, 0.1)', borderRadius: '4px' }}>
+              <div style={{ fontSize: '12px', fontWeight: '600', color: '#66bb6a', marginBottom: '8px' }}>📊 Data</div>
+              <div style={{ fontSize: '11px', color: '#888' }}>Dataset: <span style={{ color: '#fff' }}>{config.dataset || 'MNIST'}</span></div>
+              <div style={{ fontSize: '11px', color: '#888' }}>Distribution: <span style={{ color: '#fff' }}>{config.dataDistribution === 'iid' ? 'IID' : 'Non-IID'}</span></div>
+              <div style={{ fontSize: '11px', color: '#888' }}>Rounds: <span style={{ color: '#fff' }}>{config.numRounds || 50}</span></div>
             </div>
           </div>
         </div>

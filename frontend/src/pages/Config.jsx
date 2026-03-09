@@ -5,17 +5,28 @@ import { setXflStrategy, startRound, saveConfig, getConfig } from '../services/a
 function Config() {
   const navigate = useNavigate();
   const [config, setConfig] = useState({
+    // FL Settings
     numClients: 40,
     clientsPerRound: 5,
     numRounds: 50,
+    // Data Parameters
     dataset: 'MNIST',
     model: 'SimpleCNN',
     dataDistribution: 'iid',
+    // Algorithmic Parameters
     strategy: 'all_layers',
     xflParam: 3,
+    // Training Parameters
     localEpochs: 2,
     batchSize: 512,
     learningRate: 0.01,
+    // Network Parameters
+    networkLatency: 0,
+    networkBandwidth: 10,
+    networkPacketLoss: 0,
+    // System Parameters
+    cpuLimit: 100,
+    ramLimit: 2048,
   });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -86,6 +97,7 @@ function Config() {
     setLoading(false);
   };
 
+  // Strategies for algorithmic parameters
   const strategies = [
     { value: 'all_layers', label: 'All Layers (FedAvg)' },
     { value: 'xfl_cyclic', label: 'XFL - Cyclic' },
@@ -93,7 +105,7 @@ function Config() {
     { value: 'xfl_quantization', label: 'XFL - Quantization' },
   ];
 
-  // Dataset to model mapping - automatically selects appropriate model
+  // Dataset to model mapping
   const datasetModelMap = {
     'MNIST': { model: 'SimpleCNN', numClasses: 10 },
     'FashionMNIST': { model: 'SimpleCNN', numClasses: 10 },
@@ -117,6 +129,41 @@ function Config() {
     { value: 'LeNet5', label: 'LeNet5 (Legacy)' },
   ];
 
+  // Network parameter options
+  const latencyOptions = [
+    { value: 0, label: '0ms (No delay)' },
+    { value: 50, label: '50ms (LAN)' },
+    { value: 100, label: '100ms (WAN)' },
+    { value: 200, label: '200ms (Slow WAN)' },
+  ];
+
+  const bandwidthOptions = [
+    { value: 10, label: '10 Mbps (Fast)' },
+    { value: 5, label: '5 Mbps (Medium)' },
+    { value: 1, label: '1 Mbps (Slow)' },
+  ];
+
+  const packetLossOptions = [
+    { value: 0, label: '0% (Perfect)' },
+    { value: 1, label: '1% (Low)' },
+    { value: 5, label: '5% (High)' },
+  ];
+
+  // System parameter options
+  const cpuLimitOptions = [
+    { value: 100, label: '100% (No limit)' },
+    { value: 75, label: '75%' },
+    { value: 50, label: '50%' },
+    { value: 25, label: '25%' },
+  ];
+
+  const ramLimitOptions = [
+    { value: 2048, label: '2048 MB (2 GB)' },
+    { value: 1024, label: '1024 MB (1 GB)' },
+    { value: 512, label: '512 MB' },
+    { value: 256, label: '256 MB' },
+  ];
+
   return (
     <div className="page-container">
       {/* Header */}
@@ -132,7 +179,7 @@ function Config() {
 
       {/* Main Content */}
       <main className="main-content">
-        <div style={{ maxWidth: '800px', margin: '0 auto' }}>
+        <div style={{ maxWidth: '900px', margin: '0 auto' }}>
           {/* Message Display */}
           {message.text && (
             <div style={{ 
@@ -146,11 +193,141 @@ function Config() {
             </div>
           )}
 
-          {/* Federated Learning Settings */}
-          <div className="card" style={{ marginBottom: '20px' }}>
-            <h2 className="panel-title">Federated Learning Settings</h2>
+          {/* ============================================ */}
+          {/* CATEGORY 1: ALGORITHMIC PARAMETERS */}
+          {/* ============================================ */}
+          <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #ab47bc' }}>
+            <h2 className="panel-title">
+              🔧 Algorithmic Parameters
+              <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#888', marginLeft: '10px' }}>
+                (XFL Strategy)
+              </span>
+            </h2>
             
             <div className="grid-2">
+              <div className="form-group">
+                <label>Aggregation Strategy</label>
+                <select
+                  value={config.strategy}
+                  onChange={(e) => handleConfigChange('strategy', e.target.value)}
+                >
+                  {strategies.map(s => (
+                    <option key={s.value} value={s.value}>{s.label}</option>
+                  ))}
+                </select>
+                <div style={{ marginTop: '5px', fontSize: '12px', color: '#888' }}>
+                  Select the layer-wise aggregation strategy
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>XFL Parameter (Top-K)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  value={config.xflParam}
+                  onChange={(e) => handleConfigChange('xflParam', parseInt(e.target.value))}
+                />
+                <div style={{ marginTop: '5px', fontSize: '12px', color: '#888' }}>
+                  Top-K layers for importance-based, layers for layerwise
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* ============================================ */}
+          {/* CATEGORY 2: NETWORK PARAMETERS */}
+          {/* ============================================ */}
+          <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #4fc3f7' }}>
+            <h2 className="panel-title">
+              🌐 Network Parameters
+              <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#888', marginLeft: '10px' }}>
+                (Latency, Bandwidth, Packet Loss)
+              </span>
+            </h2>
+            
+            <div className="grid-3">
+              <div className="form-group">
+                <label>Latency</label>
+                <select
+                  value={config.networkLatency}
+                  onChange={(e) => handleConfigChange('networkLatency', parseInt(e.target.value))}
+                >
+                  {latencyOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Bandwidth</label>
+                <select
+                  value={config.networkBandwidth}
+                  onChange={(e) => handleConfigChange('networkBandwidth', parseInt(e.target.value))}
+                >
+                  {bandwidthOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Packet Loss</label>
+                <select
+                  value={config.networkPacketLoss}
+                  onChange={(e) => handleConfigChange('networkPacketLoss', parseInt(e.target.value))}
+                >
+                  {packetLossOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* ============================================ */}
+          {/* CATEGORY 3: SYSTEM PARAMETERS */}
+          {/* ============================================ */}
+          <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #ffa726' }}>
+            <h2 className="panel-title">
+              💻 System Parameters
+              <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#888', marginLeft: '10px' }}>
+                (CPU, RAM, Clients)
+              </span>
+            </h2>
+            
+            <div className="grid-2">
+              <div className="form-group">
+                <label>CPU Limitation</label>
+                <select
+                  value={config.cpuLimit}
+                  onChange={(e) => handleConfigChange('cpuLimit', parseInt(e.target.value))}
+                >
+                  {cpuLimitOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <div style={{ marginTop: '5px', fontSize: '12px', color: '#888' }}>
+                  Maximum CPU usage per client
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>RAM Limitation</label>
+                <select
+                  value={config.ramLimit}
+                  onChange={(e) => handleConfigChange('ramLimit', parseInt(e.target.value))}
+                >
+                  {ramLimitOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <div style={{ marginTop: '5px', fontSize: '12px', color: '#888' }}>
+                  Maximum RAM usage per client
+                </div>
+              </div>
+
               <div className="form-group">
                 <label>Total Number of Clients</label>
                 <input
@@ -178,7 +355,58 @@ function Config() {
                   Number of clients to use in each training round (1-40)
                 </div>
               </div>
+            </div>
+          </div>
 
+          {/* ============================================ */}
+          {/* CATEGORY 4: DATA PARAMETERS */}
+          {/* ============================================ */}
+          <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #66bb6a' }}>
+            <h2 className="panel-title">
+              📊 Data Parameters
+              <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#888', marginLeft: '10px' }}>
+                (Dataset, Distribution)
+              </span>
+            </h2>
+            
+            <div className="grid-2">
+              <div className="form-group">
+                <label>Dataset</label>
+                <select
+                  value={config.dataset}
+                  onChange={(e) => handleConfigChange('dataset', e.target.value)}
+                >
+                  {datasets.map(ds => (
+                    <option key={ds.value} value={ds.value}>{ds.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label>Data Distribution</label>
+                <select
+                  value={config.dataDistribution}
+                  onChange={(e) => handleConfigChange('dataDistribution', e.target.value)}
+                >
+                  <option value="iid">IID (Independent and Identically Distributed)</option>
+                  <option value="non_iid">Non-IID</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* ============================================ */}
+          {/* TRAINING PARAMETERS */}
+          {/* ============================================ */}
+          <div className="card" style={{ marginBottom: '20px' }}>
+            <h2 className="panel-title">
+              ⚙️ Training Parameters
+              <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#888', marginLeft: '10px' }}>
+                (Rounds, Epochs, Learning Rate)
+              </span>
+            </h2>
+            
+            <div className="grid-3">
               <div className="form-group">
                 <label>Number of Rounds</label>
                 <input
@@ -210,69 +438,6 @@ function Config() {
                   value={config.batchSize}
                   onChange={(e) => handleConfigChange('batchSize', parseInt(e.target.value))}
                 />
-              </div>
-            </div>
-          </div>
-
-          {/* Dataset Settings */}
-          <div className="card" style={{ marginBottom: '20px' }}>
-            <h2 className="panel-title">Dataset Configuration</h2>
-            
-            <div className="grid-2">
-              <div className="form-group">
-                <label>Dataset</label>
-                <select
-                  value={config.dataset}
-                  onChange={(e) => handleConfigChange('dataset', e.target.value)}
-                >
-                  {datasets.map(ds => (
-                    <option key={ds.value} value={ds.value}>{ds.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>Data Distribution</label>
-                <select
-                  value={config.dataDistribution}
-                  onChange={(e) => handleConfigChange('dataDistribution', e.target.value)}
-                >
-                  <option value="iid">IID (Independent and Identically Distributed)</option>
-                  <option value="non_iid">Non-IID</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* XFL Strategy Settings */}
-          <div className="card" style={{ marginBottom: '20px' }}>
-            <h2 className="panel-title">XFL Strategy Configuration</h2>
-            
-            <div className="grid-2">
-              <div className="form-group">
-                <label>Aggregation Strategy</label>
-                <select
-                  value={config.strategy}
-                  onChange={(e) => handleConfigChange('strategy', e.target.value)}
-                >
-                  {strategies.map(s => (
-                    <option key={s.value} value={s.value}>{s.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label>XFL Parameter</label>
-                <input
-                  type="number"
-                  min="1"
-                  max="10"
-                  value={config.xflParam}
-                  onChange={(e) => handleConfigChange('xflParam', parseInt(e.target.value))}
-                />
-                <div style={{ marginTop: '5px', fontSize: '12px', color: '#888' }}>
-                  Top-K layers for importance based, layers for layerwise
-                </div>
               </div>
             </div>
 
@@ -326,3 +491,4 @@ function Config() {
 }
 
 export default Config;
+
