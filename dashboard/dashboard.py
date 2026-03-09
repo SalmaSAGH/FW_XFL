@@ -151,6 +151,16 @@ class DashboardServer:
                 server_status = None
                 submitted_clients = []
                 selected_clients = []
+                
+                # Network, system, and data parameters - defaults
+                network_latency = 0
+                network_bandwidth = 10
+                network_packet_loss = 0
+                cpu_limit = 100
+                ram_limit = 512
+                active_clients_percent = 100
+                data_distribution = 'iid'
+                
                 try:
                     import requests
                     server_status = requests.get('http://server:5000/api/status', timeout=10).json()
@@ -163,6 +173,15 @@ class DashboardServer:
                     num_layers = server_status.get('num_layers', 0)
                     submitted_clients = server_status.get('submitted_clients', [])
                     selected_clients = server_status.get('selected_clients', [])
+                    
+                    # Extract network, system, and data parameters from server
+                    network_latency = server_status.get('network_latency', 0)
+                    network_bandwidth = server_status.get('network_bandwidth', 10)
+                    network_packet_loss = server_status.get('network_packet_loss', 0)
+                    cpu_limit = server_status.get('cpu_limit', 100)
+                    ram_limit = server_status.get('ram_limit', 512)
+                    active_clients_percent = server_status.get('active_clients_percent', 100)
+                    data_distribution = server_status.get('data_distribution', 'iid')
                 except:
                     pass
 
@@ -191,6 +210,16 @@ class DashboardServer:
                     "num_layers": num_layers,
                     "submitted_clients": submitted_clients,
                     "selected_clients": selected_clients,
+                    # Network parameters
+                    "network_latency": network_latency,
+                    "network_bandwidth": network_bandwidth,
+                    "network_packet_loss": network_packet_loss,
+                    # System parameters
+                    "cpu_limit": cpu_limit,
+                    "ram_limit": ram_limit,
+                    "active_clients_percent": active_clients_percent,
+                    # Data parameters
+                    "data_distribution": data_distribution,
                     "debug": debug_info,
                     "db_url_used": self.db_url  # Debug: show what DB URL is being used
                 })
@@ -672,6 +701,21 @@ class DashboardServer:
                 df_clients.to_csv('/app/logs/client_metrics.csv', index=False)
 
                 return jsonify({"status": "success", "message": "Data exported to logs/ folder"})
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+        
+        @self.app.route('/api/history_by_strategy')
+        def get_history_by_strategy():
+            """Proxy history by strategy request to FL server"""
+            try:
+                import requests
+                # Try Docker networking first, then fallback to localhost
+                try:
+                    response = requests.get('http://server:5000/api/history_by_strategy', timeout=30)
+                except:
+                    # Fallback to localhost for local development
+                    response = requests.get('http://localhost:5000/api/history_by_strategy', timeout=30)
+                return jsonify(response.json()), response.status_code
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
     
