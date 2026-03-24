@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { getHistoryByStrategy } from '../services/api';
 
 // Strategy colors
@@ -15,9 +15,7 @@ const strategyColors = {
   'split': '#7e57c2'
 };
 
-const getStrategyColor = (strategy) => {
-  return strategyColors[strategy] || '#888888';
-};
+const getStrategyColor = (strategy) => strategyColors[strategy] || '#888888';
 
 const getStrategyLabel = (strategy) => {
   const labels = {
@@ -31,6 +29,15 @@ const getStrategyLabel = (strategy) => {
     'split': 'Split Learning'
   };
   return labels[strategy] || strategy;
+};
+
+// Format a Unix timestamp as a readable date/time string
+const formatTimestamp = (ts) => {
+  if (!ts) return '—';
+  return new Date(ts * 1000).toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit'
+  });
 };
 
 function History() {
@@ -54,7 +61,6 @@ function History() {
       if (response.data && response.data.strategies) {
         setStrategies(response.data.strategies);
         
-        // Auto-select first strategy if available
         if (response.data.strategies.length > 0 && !selectedStrategy) {
           setSelectedStrategy(response.data.strategies[0]);
           if (response.data.strategies[0].experiments.length > 0) {
@@ -81,7 +87,6 @@ function History() {
 
   const handleStrategyClick = (strategy) => {
     setSelectedStrategy(strategy);
-    // Auto-select first experiment of the strategy
     if (strategy.experiments.length > 0) {
       setSelectedExperiment(strategy.experiments[0]);
     } else {
@@ -93,7 +98,19 @@ function History() {
     setSelectedExperiment(experiment);
   };
 
-  // Show loading indicator during initial load
+  // ── Session badge label ────────────────────────────────────────────────────
+  // Shows "Session N" for real sessions, "Legacy" for pre-session_id data.
+  const getSessionLabel = (exp) => {
+    if (exp.is_legacy) return 'Legacy data';
+    return `Session ${exp.experiment_id}`;
+  };
+
+  const getSessionSublabel = (exp) => {
+    if (exp.started_at) return formatTimestamp(exp.started_at);
+    if (exp.is_legacy) return 'Recorded before session tracking';
+    return 'Started at unknown time';
+  };
+
   if (initialLoading) {
     return (
       <div className="page-container">
@@ -136,7 +153,6 @@ function History() {
         </div>
       </header>
 
-      {/* Main Content */}
       <main className="main-content">
         {error && (
           <div style={{ 
@@ -154,11 +170,7 @@ function History() {
         {strategies.length === 0 && !loading && (
           <div className="card">
             <h2 className="panel-title">📊 History</h2>
-            <div style={{ 
-              textAlign: 'center', 
-              padding: '40px',
-              color: '#888' 
-            }}>
+            <div style={{ textAlign: 'center', padding: '40px', color: '#888' }}>
               <p style={{ fontSize: '18px', marginBottom: '10px' }}>No history data available</p>
               <p>Start some experiments to see the history here.</p>
               <button 
@@ -177,11 +189,7 @@ function History() {
           <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
             
             {/* Sidebar - Strategy List */}
-            <div style={{ 
-              width: '280px', 
-              flexShrink: 0,
-              marginBottom: '20px'
-            }}>
+            <div style={{ width: '280px', flexShrink: 0, marginBottom: '20px' }}>
               <div className="card" style={{ padding: '0' }}>
                 <div style={{ 
                   padding: '15px', 
@@ -215,7 +223,7 @@ function History() {
                         {getStrategyLabel(strategy.strategy)}
                       </div>
                       <div style={{ fontSize: '12px', color: '#888' }}>
-                        {strategy.total_experiments} experiment(s) • {strategy.total_rounds} rounds
+                        {strategy.total_experiments} session(s) • {strategy.total_rounds} rounds
                       </div>
                     </div>
                   ))}
@@ -226,7 +234,7 @@ function History() {
             {/* Main Content */}
             <div style={{ flex: 1, minWidth: '300px' }}>
               
-              {/* Strategy Overview */}
+              {/* Strategy Overview + Session Selector */}
               {selectedStrategy && (
                 <div className="card" style={{ marginBottom: '20px' }}>
                   <h2 className="panel-title">
@@ -235,46 +243,119 @@ function History() {
                     </span>
                   </h2>
                   
-                  {/* Experiments List */}
+                  {/* Sessions list */}
                   <div style={{ marginBottom: '20px' }}>
-                    <h4 style={{ color: '#888', marginBottom: '10px' }}>Experiments (Sessions)</h4>
+                    <h4 style={{ color: '#888', marginBottom: '12px' }}>
+                      Sessions
+                      <span style={{ 
+                        marginLeft: '8px', 
+                        fontSize: '11px', 
+                        color: '#555',
+                        fontWeight: 'normal'
+                      }}>
+                        — one per docker-compose up
+                      </span>
+                    </h4>
+
                     <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                      {selectedStrategy.experiments.map((exp) => (
-                        <button
-                          key={exp.experiment_id}
-                          onClick={() => handleExperimentClick(exp)}
-                          style={{
-                            padding: '10px 15px',
-                            borderRadius: '4px',
-                            border: '1px solid #2d3348',
-                            background: selectedExperiment?.experiment_id === exp.experiment_id 
-                              ? getStrategyColor(selectedStrategy.strategy) 
-                              : '#252942',
-                            color: selectedExperiment?.experiment_id === exp.experiment_id 
-                              ? '#1a1d2e' 
-                              : '#e0e0e0',
-                            cursor: 'pointer',
-                            fontWeight: '500',
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          Session {exp.experiment_id} 
-                          <span style={{ fontSize: '11px', marginLeft: '5px', opacity: 0.8 }}>
-                            (Rounds {exp.stats?.first_round || 0} - {exp.stats?.last_round || 0})
-                          </span>
-                        </button>
-                      ))}
+                      {selectedStrategy.experiments.map((exp) => {
+                        const isSelected = selectedExperiment?.experiment_id === exp.experiment_id
+                          && selectedExperiment?.session_id === exp.session_id;
+                        const color = getStrategyColor(selectedStrategy.strategy);
+
+                        return (
+                          <button
+                            key={`${exp.session_id ?? 'legacy'}-${exp.experiment_id}`}
+                            onClick={() => handleExperimentClick(exp)}
+                            style={{
+                              padding: '10px 15px',
+                              borderRadius: '6px',
+                              border: `1px solid ${isSelected ? color : '#2d3348'}`,
+                              background: isSelected ? color : '#252942',
+                              color: isSelected ? '#1a1d2e' : '#e0e0e0',
+                              cursor: 'pointer',
+                              fontWeight: '500',
+                              transition: 'all 0.2s',
+                              textAlign: 'left',
+                              minWidth: '150px'
+                            }}
+                          >
+                            {/* Session label */}
+                            <div style={{ fontWeight: '600', fontSize: '13px' }}>
+                              {exp.is_legacy ? '⚠️ Legacy' : `🖥️ ${getSessionLabel(exp)}`}
+                            </div>
+                            {/* Started at */}
+                            <div style={{ 
+                              fontSize: '11px', 
+                              marginTop: '3px',
+                              opacity: isSelected ? 0.75 : 0.6
+                            }}>
+                              {getSessionSublabel(exp)}
+                            </div>
+                            {/* Rounds range */}
+                            <div style={{ 
+                              fontSize: '11px', 
+                              marginTop: '2px',
+                              opacity: isSelected ? 0.75 : 0.6
+                            }}>
+                              Rounds {exp.stats?.first_round ?? 0}–{exp.stats?.last_round ?? 0}
+                              &nbsp;·&nbsp;
+                              {exp.stats?.total_rounds ?? 0} total
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* Experiment Details */}
+              {/* Experiment / Session Details */}
               {selectedExperiment && selectedStrategy && (
                 <>
+                  {/* Session info banner */}
+                  <div className="card" style={{ 
+                    marginBottom: '20px',
+                    borderLeft: `3px solid ${getStrategyColor(selectedStrategy.strategy)}`
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+                      <div>
+                        <div style={{ color: '#888', fontSize: '12px', marginBottom: '2px' }}>Session</div>
+                        <div style={{ color: '#e0e0e0', fontWeight: '600' }}>
+                          {selectedExperiment.is_legacy ? 'Legacy data (no session tracking)' : getSessionLabel(selectedExperiment)}
+                        </div>
+                      </div>
+                      {selectedExperiment.started_at && (
+                        <div>
+                          <div style={{ color: '#888', fontSize: '12px', marginBottom: '2px' }}>Started at</div>
+                          <div style={{ color: '#e0e0e0' }}>{formatTimestamp(selectedExperiment.started_at)}</div>
+                        </div>
+                      )}
+                      {selectedExperiment.hostname && (
+                        <div>
+                          <div style={{ color: '#888', fontSize: '12px', marginBottom: '2px' }}>Host</div>
+                          <div style={{ color: '#e0e0e0' }}>{selectedExperiment.hostname}</div>
+                        </div>
+                      )}
+                      {selectedExperiment.session_id && (
+                        <div style={{ marginLeft: 'auto' }}>
+                          <div style={{ color: '#888', fontSize: '12px', marginBottom: '2px' }}>Session ID</div>
+                          <div style={{ 
+                            color: '#555', 
+                            fontSize: '11px', 
+                            fontFamily: 'monospace',
+                            wordBreak: 'break-all'
+                          }}>
+                            {selectedExperiment.session_id}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
                   {/* Experiment Stats */}
                   <div className="card" style={{ marginBottom: '20px' }}>
-                    <h3 className="panel-title">📈 Experiment Statistics</h3>
+                    <h3 className="panel-title">📈 Session Statistics</h3>
                     <div className="grid-4">
                       <div className="info-card">
                         <div className="info-label">Total Rounds</div>
@@ -312,7 +393,7 @@ function History() {
                     {/* Accuracy Evolution */}
                     <div className="card">
                       <h3 className="panel-title">📈 Accuracy Evolution</h3>
-                      {selectedExperiment.accuracy_evolution && selectedExperiment.accuracy_evolution.length > 0 ? (
+                      {selectedExperiment.accuracy_evolution?.length > 0 ? (
                         <ResponsiveContainer width="100%" height={250}>
                           <LineChart data={selectedExperiment.accuracy_evolution}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#2d3348" />
@@ -343,7 +424,7 @@ function History() {
                     {/* Loss Evolution */}
                     <div className="card">
                       <h3 className="panel-title">📉 Loss Evolution</h3>
-                      {selectedExperiment.loss_evolution && selectedExperiment.loss_evolution.length > 0 ? (
+                      {selectedExperiment.loss_evolution?.length > 0 ? (
                         <ResponsiveContainer width="100%" height={250}>
                           <LineChart data={selectedExperiment.loss_evolution}>
                             <CartesianGrid strokeDasharray="3 3" stroke="#2d3348" />
@@ -384,9 +465,7 @@ function History() {
                             borderRadius: '4px',
                             border: '1px solid #2d3348'
                           }}>
-                            <div style={{ color: '#888', fontSize: '12px', marginBottom: '5px' }}>
-                              {key}
-                            </div>
+                            <div style={{ color: '#888', fontSize: '12px', marginBottom: '5px' }}>{key}</div>
                             <div style={{ color: '#4fc3f7', fontWeight: '500', fontSize: '14px' }}>
                               {value !== null && value !== undefined ? String(value) : '-'}
                             </div>
@@ -394,9 +473,7 @@ function History() {
                         ))}
                       </div>
                     ) : (
-                      <p style={{ color: '#888' }}>
-                        No configuration data available for this experiment.
-                      </p>
+                      <p style={{ color: '#888' }}>No configuration data available for this session.</p>
                     )}
                   </div>
 
@@ -415,7 +492,7 @@ function History() {
                           </tr>
                         </thead>
                         <tbody>
-                          {selectedExperiment.rounds && selectedExperiment.rounds.length > 0 ? (
+                          {selectedExperiment.rounds?.length > 0 ? (
                             selectedExperiment.rounds.map((round, idx) => (
                               <tr key={idx}>
                                 <td>{round.round}</td>
@@ -435,9 +512,7 @@ function History() {
                                 </td>
                                 <td>
                                   {round.agg_time !== null ? (
-                                    <span style={{ color: '#ffa726' }}>
-                                      {round.agg_time}s
-                                    </span>
+                                    <span style={{ color: '#ffa726' }}>{round.agg_time}s</span>
                                   ) : '-'}
                                 </td>
                                 <td>{round.clients || '-'}</td>
@@ -465,4 +540,3 @@ function History() {
 }
 
 export default History;
-

@@ -1,30 +1,38 @@
-# Build stage
-FROM node:18-alpine as build
+# Dockerfile for XFL-RPiLab Client
+FROM python:3.10-slim
 
+# Set working directory
 WORKDIR /app
 
-# Copy package files
-COPY package*.json ./
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies
-RUN npm ci
+# Copy requirements
+COPY requirements.txt .
 
-# Copy source code
-COPY . .
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Build the React app
-RUN npm run build
+# Copy client code
+COPY client/ ./client/
+COPY server/ ./server/
+COPY dashboard/ ./dashboard/
+COPY config/ ./config/
 
-# Production stage with nginx
-FROM nginx:alpine
 
-# Copy nginx configuration
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# Create data and logs directories
+RUN mkdir -p /app/data /app/logs
 
-# Copy built React app
-COPY --from=build /app/dist /usr/share/nginx/html
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
 
-# Expose port 80
-EXPOSE 80
+# PyTorch memory optimization settings
+ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
+ENV OMP_NUM_THREADS=1
+ENV MKL_NUM_THREADS=1
 
-CMD ["nginx", "-g", "daemon off;"]
+# Default command (will be overridden by docker-compose)
+CMD ["python", "-m", "client.run_client_standalone"]

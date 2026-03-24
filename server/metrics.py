@@ -270,6 +270,25 @@ class ServerMetricsCollector:
         # Add strategy column if it doesn't exist (for migration)
         cursor.execute("ALTER TABLE round_metrics ADD COLUMN IF NOT EXISTS strategy VARCHAR(255)")
 
+        # ── NEW: Add session_id column (migration-safe) ──────────────────────
+        # session_id is a UUID generated once per docker-compose up.
+        # Every round started in that container lifetime shares the same session_id.
+        # This lets the History page group rounds into true "sessions" without
+        # relying on round-number gap detection.
+        cursor.execute("ALTER TABLE round_metrics ADD COLUMN IF NOT EXISTS session_id VARCHAR(36)")
+
+        # ── NEW: Table that registers each server startup ─────────────────────
+        # One row is inserted at docker-compose up; the session_id is reused
+        # for every round until docker-compose down.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS server_sessions (
+                session_id   VARCHAR(36)  PRIMARY KEY,
+                started_at   REAL         NOT NULL,
+                hostname     VARCHAR(255),
+                notes        TEXT
+            )
+        """)
+
         # Table for client-level metrics
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS client_metrics (
@@ -315,11 +334,13 @@ class ServerMetricsCollector:
         global_test_accuracy: float = None,
         total_samples: int = None,
         strategy: str = None,
-        additional_metrics: Dict[str, Any] = None
+        additional_metrics: Dict[str, Any] = None,
+        session_id: str = None          # ← NEW parameter
     ):
         """
-        Store metrics for a complete FL round (upsert - updates if exists, inserts if not)
-        Uses retry logic for better reliability
+        Store metrics for a complete FL round (upsert - updates if exists, inserts if not).
+        The session_id tags this round to the current docker-compose up lifetime.
+        Uses retry logic for better reliability.
         """
         
         def _do_store(conn):
@@ -328,19 +349,31 @@ class ServerMetricsCollector:
                 UPDATE round_metrics
                 SET timestamp = %s, num_clients = %s, aggregation_time_sec = %s,
                     global_test_loss = %s, global_test_accuracy = %s, total_samples = %s,
-                    strategy = %s, metrics_json = %s
-                WHERE round_number = %s
-            """, (time.time(), num_clients, aggregation_time, global_test_loss, global_test_accuracy,
-                  total_samples, strategy, psycopg2.extras.Json(additional_metrics) if additional_metrics else None, round_number))
+                    strategy = %s, metrics_json = %s, session_id = %s
+                WHERE round_number = %s AND session_id = %s
+            """, (
+                time.time(), num_clients, aggregation_time,
+                global_test_loss, global_test_accuracy, total_samples,
+                strategy,
+                psycopg2.extras.Json(additional_metrics) if additional_metrics else None,
+                session_id,
+                round_number, session_id          # WHERE clause
+            ))
             if cursor.rowcount == 0:
                 cursor.execute("""
-                    INSERT INTO round_metrics (round_number, timestamp, num_clients, aggregation_time_sec,
-                     global_test_loss, global_test_accuracy, total_samples, strategy, metrics_json)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """, (round_number, time.time(), num_clients, aggregation_time, global_test_loss,
-                      global_test_accuracy, total_samples, strategy,
-                      psycopg2.extras.Json(additional_metrics) if additional_metrics else None))
-            print(f"✅ Round {round_number} metrics stored/updated with strategy: {strategy}")
+                    INSERT INTO round_metrics (
+                        round_number, timestamp, num_clients, aggregation_time_sec,
+                        global_test_loss, global_test_accuracy, total_samples,
+                        strategy, metrics_json, session_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    round_number, time.time(), num_clients, aggregation_time,
+                    global_test_loss, global_test_accuracy, total_samples,
+                    strategy,
+                    psycopg2.extras.Json(additional_metrics) if additional_metrics else None,
+                    session_id
+                ))
+            print(f"✅ Round {round_number} metrics stored/updated | strategy: {strategy} | session: {session_id}")
         
         try:
             self._execute_with_retry(_do_store)
@@ -348,13 +381,32 @@ class ServerMetricsCollector:
             print(f"❌ Failed to store round metrics after retries: {e}")
             raise
 
-    def update_round_metrics_with_evaluation(self, round_number: int, global_test_loss: float, global_test_accuracy: float):
+    def update_round_metrics_with_evaluation(
+        self,
+        round_number: int,
+        global_test_loss: float,
+        global_test_accuracy: float,
+        session_id: str = None          # ← NEW parameter
+    ):
         """Update round metrics with evaluation results"""
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("UPDATE round_metrics SET global_test_loss = %s, global_test_accuracy = %s WHERE round_number = %s",
-                          (global_test_loss, global_test_accuracy, round_number))
+            if session_id:
+                cursor.execute(
+                    """UPDATE round_metrics
+                       SET global_test_loss = %s, global_test_accuracy = %s
+                       WHERE round_number = %s AND session_id = %s""",
+                    (global_test_loss, global_test_accuracy, round_number, session_id)
+                )
+            else:
+                # Fallback for callers that don't provide session_id yet
+                cursor.execute(
+                    """UPDATE round_metrics
+                       SET global_test_loss = %s, global_test_accuracy = %s
+                       WHERE round_number = %s""",
+                    (global_test_loss, global_test_accuracy, round_number)
+                )
             conn.commit()
             print(f"✅ Round {round_number} metrics updated with evaluation results")
         finally:

@@ -13,10 +13,11 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from client import FLClient, create_model, create_dataloaders
+from client.model import DATASET_CONFIG
 
 
 def wait_for_server(server_url: str):
-    """Wait for server"""
+    """Wait for server to be ready"""
     for i in range(30):
         try:
             if requests.get(f"{server_url}/api/status", timeout=2).status_code == 200:
@@ -24,36 +25,48 @@ def wait_for_server(server_url: str):
         except:
             pass
         time.sleep(1)
-    raise RuntimeError("Server not reachable")
+    raise RuntimeError("Server not reachable after 30s")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--client-id', type=int, required=True)
-    parser.add_argument('--server-host', type=str, default='server')
-    parser.add_argument('--server-port', type=int, default=5000)
-    parser.add_argument('--dataset', type=str, default='MNIST')
-    parser.add_argument('--num-clients', type=int, default=40)
-    parser.add_argument('--batch-size', type=int, default=32)
+    parser.add_argument('--client-id',    type=int, required=True)
+    parser.add_argument('--server-host',  type=str, default='server')
+    parser.add_argument('--server-port',  type=int, default=5000)
+    parser.add_argument('--dataset',      type=str, default='MNIST')
+    parser.add_argument('--num-clients',  type=int, default=40)
+    parser.add_argument('--batch-size',   type=int, default=32)
     parser.add_argument('--local-epochs', type=int, default=1)
     parser.add_argument('--distribution', type=str, default='iid')
-    
+
     args = parser.parse_args()
-    
+
     print(f"Client {args.client_id} starting...")
-    
+
     server_url = f"http://{args.server_host}:{args.server_port}"
-    
-    # Wait for server
+
+    # ── Wait for server ───────────────────────────────────────────────────────
     wait_for_server(server_url)
-    print(f"Client {args.client_id}: Server ready")
-    
-    # Create model
-    model = create_model("SimpleCNN", num_classes=10)
-    
-    # Load data (this is the SLOW part - do it ONCE)
-    print(f"Client {args.client_id}: Loading data...")
+    print(f"Client {args.client_id}: Server ready at {server_url}")
+
+    # ── Create model using DATASET_CONFIG ─────────────────────────────────────
+    dataset_cfg = DATASET_CONFIG.get(args.dataset, ('SimpleCNN', 10, 1, 28))
+    model_name, num_classes, in_channels, input_size = dataset_cfg
+
+    print(f"Client {args.client_id}: Creating model={model_name} | "
+          f"num_classes={num_classes} | in_channels={in_channels} | input_size={input_size}")
+
+    model = create_model(
+        model_name,
+        num_classes=num_classes,
+        in_channels=in_channels,
+        input_size=input_size
+    )
+
+    # ── Load initial data ─────────────────────────────────────────────────────
+    print(f"Client {args.client_id}: Loading data ({args.dataset}, {args.distribution})...")
     start_load = time.time()
+
     client_loaders, _ = create_dataloaders(
         dataset_name=args.dataset,
         num_clients=args.num_clients,
@@ -63,90 +76,92 @@ def main():
         seed=42
     )
     train_loader = client_loaders[args.client_id]
-    print(f"Client {args.client_id}: Data loaded in {time.time()-start_load:.1f}s")
-    
-    # Create FL client
+
+    print(f"Client {args.client_id}: Data loaded in {time.time() - start_load:.1f}s "
+          f"({len(train_loader.dataset)} samples)")
+
+    # ── Create FL client — passer TOUS les paramètres ────────────────────────
     fl_client = FLClient(
         client_id=args.client_id,
         model=model,
         train_loader=train_loader,
         server_url=server_url,
         local_epochs=args.local_epochs,
-        timeout=120
+        timeout=120,
+        dataset_name=args.dataset,        # ← IMPORTANT: synchroniser current_dataset_name
+        num_clients=args.num_clients,     # ← IMPORTANT: pour reload_data_if_needed
+        batch_size=args.batch_size,       # ← IMPORTANT
+        distribution=args.distribution,  # ← IMPORTANT
+        data_dir="/app/data"              # ← IMPORTANT
     )
-    
+
     print(f"✅ Client {args.client_id} READY and waiting for rounds\n")
-    
-    # Main loop - AGGRESSIVE polling with exponential backoff retry
+
+    # ── Main polling loop ─────────────────────────────────────────────────────
     last_participated = 0
     check_count = 0
     consecutive_failures = 0
     max_retries = 5
-    base_delay = 0.5  # Start with 0.5 second delay
-    
+    base_delay = 0.5
+
     while True:
         try:
             check_count += 1
-            
-            # Get status
+
             resp = requests.get(f"{server_url}/api/status", timeout=2)
             status = resp.json()
-            
             current_round = status.get('current_round', 0)
-            
-            # Log every 10 checks (for debugging)
+
             if check_count % 10 == 0:
-                print(f"Client {args.client_id}: Monitoring... (Round: {current_round}, Last: {last_participated})")
-            
-            # NEW ROUND DETECTED?
+                print(f"Client {args.client_id}: Monitoring... "
+                      f"(Round: {current_round}, Last: {last_participated})")
+
             if current_round > last_participated and current_round > 0:
                 print(f"\n🔥 Client {args.client_id}: Round {current_round} DETECTED! Participating NOW...")
-                
-                # Retry logic with exponential backoff
+
                 retry_count = 0
                 success = False
-                
+
                 while retry_count < max_retries and not success:
                     start_time = time.time()
-                    success = fl_client.participate_in_round(verbose=False)
+                    # verbose=True pour voir toutes les erreurs dans les logs Docker
+                    success = fl_client.participate_in_round(verbose=True)
                     elapsed = time.time() - start_time
-                    
+
                     if success:
                         last_participated = current_round
                         consecutive_failures = 0
-                        print(f"✅ Client {args.client_id}: Round {current_round} DONE in {elapsed:.1f}s\n")
+                        print(f"✅ Client {args.client_id}: Round {current_round} "
+                              f"DONE in {elapsed:.1f}s\n")
                         break
                     else:
                         retry_count += 1
                         consecutive_failures += 1
-                        
+
                         if retry_count < max_retries:
-                            # Exponential backoff: 0.5s, 1s, 2s, 4s, 8s...
                             delay = base_delay * (2 ** (retry_count - 1))
-                            print(f"⚠️  Client {args.client_id}: Attempt {retry_count}/{max_retries} failed. Retrying in {delay:.1f}s...")
+                            print(f"⚠️  Client {args.client_id}: Attempt {retry_count}/{max_retries} "
+                                  f"failed. Retrying in {delay:.1f}s...")
                             time.sleep(delay)
                         else:
-                            print(f"❌ Client {args.client_id}: All {max_retries} attempts failed for round {current_round}")
-            
-            # Reset failure count on successful round
+                            print(f"❌ Client {args.client_id}: All {max_retries} attempts "
+                                  f"failed for round {current_round}")
+
             if current_round == last_participated:
                 consecutive_failures = 0
-            
-            # Adaptive sleep - check more frequently when server might be busy
-            # But back off if there are consecutive failures
+
             if consecutive_failures > 3:
-                time.sleep(2.0)  # Back off to 2s if having issues
+                time.sleep(2.0)
             else:
-                # Very short sleep - check every 200ms
                 time.sleep(0.2)
-        
+
         except KeyboardInterrupt:
             print(f"Client {args.client_id} stopped by user")
             break
         except Exception as e:
-            # On exception, use exponential backoff
             delay = base_delay * (2 ** min(consecutive_failures, 5))
-            print(f"⚠️  Client {args.client_id}: Connection error - {e}. Retrying in {delay:.1f}s...")
+            print(f"⚠️  Client {args.client_id}: Connection error — {e}. "
+                  f"Retrying in {delay:.1f}s...")
             time.sleep(delay)
 
 

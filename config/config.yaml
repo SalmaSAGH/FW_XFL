@@ -6,122 +6,68 @@
 # Encadrant: Pr Yann BEN MAISSA
 # ============================================================================
 
-# Experiment Information
 experiment:
   name: "mnist_fedavg_xfl_baseline"
-  description: "Baseline experiment with FedAvg-XFL on MNIST (40 Raspberry Pi)"
-  seed: 42  # For reproducibility
+  description: "Baseline experiment with FedAvg-XFL on MNIST (10 Raspberry Pi)"
+  seed: 42
 
-# Federated Learning Parameters
 federated_learning:
-  num_rounds: 50  # Number of FL rounds
-  num_clients: 40  # Total number of clients (Raspberry Pi)
-  clients_per_round: 40  # Clients participating per round
-  local_epochs: 2  # Number of local training epochs per client
-  
-# Dataset Configuration
+  num_rounds: 50
+  num_clients: 10        # ← nombre réel de clients Docker (client-0 à client-9)
+  clients_per_round: 7   # ← doit être ≤ num_clients
+  local_epochs: 2
+
 dataset:
-  name: "MNIST"  # MNIST, CIFAR10, FashionMNIST, CIFAR100, EMNIST
-  data_distribution: "iid"  # iid or non_iid
+  name: "MNIST"
+  data_distribution: "iid"
   train_test_split: 0.8
-  batch_size: 32  # Réduit pour plus de mises à jour par epoch
-  
-# Model Configuration
+  batch_size: 32
+
 model:
-  name: "SimpleCNN"  # SimpleCNN, LeNet5, CIFAR100CNN, EMNISTCNN
-  input_shape: [1, 28, 28]  # [channels, height, width]
+  name: "SimpleCNN"
+  input_shape: [1, 28, 28]
   num_classes: 10
-  
-# Training Parameters
+
 training:
-  optimizer: "sgd"  # sgd, adam
+  optimizer: "sgd"
   learning_rate: 0.01
-  momentum: 0.9  # For SGD
+  momentum: 0.9
   weight_decay: 0.0001
 
-# ============================================================================
-# XFL CONFIGURATION
-# ============================================================================
-xfl:
-  # Stratégie d'agrégation
-  # Options: "fedavg", "xfl_cyclic", "xfl_sparsification", "xfl_quantization"
-  aggregation_strategy: "fedavg"
-  
-  # Configuration XFL
-  # Options valides:
-  #   - "all_layers": FedAvg standard (toutes les couches)
-  #   - "xfl_cyclic": XFL cyclique (1 couche par client par tour)
-  #   - "xfl_sparsification": XFL avec sparsification
-  #   - "xfl_quantization": XFL avec quantification
-  xfl_strategy: "all_layers"
-  
-  # Tracking des métriques
-  track_metrics: true
-  
-  # Seuil de sparsification (pour xfl_sparsification)
-  sparsification_threshold: 0.01
-  
-  # Bits de quantification (pour xfl_quantization)
-  quantization_bits: 8
-  
-  # Export des métriques
-  export_layer_metrics: true
-  export_format: "csv"  # csv, json
-  
-# Network Constraints (Simulation - pour Docker uniquement)
-# Pour Raspberry Pi réels, ces contraintes seront naturelles
+strategy:
+  type: "all_layers"
+  num_layers: null
+
 network:
-  simulate_constraints: false  # false pour RPi réels
-  latency_ms: 50  # Average latency in milliseconds
-  latency_std_ms: 10  # Standard deviation of latency
-  bandwidth_mbps: 10  # Bandwidth in Mbps
-  packet_loss_rate: 0.0  # Packet loss probability (0.0 to 1.0)
-  jitter_ms: 5  # Network jitter
-  
-# System Resources Monitoring
+  simulate_constraints: false
+  latency_ms: 50
+  latency_std_ms: 10
+  bandwidth_mbps: 10
+  packet_loss_rate: 0.0
+  jitter_ms: 5
+
 monitoring:
   enabled: true
-  metrics_interval_sec: 5  # Collect metrics every N seconds
-  log_level: "INFO"  # DEBUG, INFO, WARNING, ERROR
-  
-  # Métriques XFL spécifiques
+  metrics_interval_sec: 5
+  log_level: "INFO"
   collect_layer_importance: true
   collect_client_divergence: true
   collect_convergence_rate: true
-  
-# Server Configuration
+
 server:
-  host: "0.0.0.0"  # Écouter sur toutes les interfaces pour RPi
+  host: "0.0.0.0"
   port: 5000
   aggregation_method: "fedavg"
-
-  # Base de données des métriques
   metrics_db_url: "postgresql://postgres:newpassword@localhost:5432/xfl_metrics"
-  
-# Client Configuration
+
 client:
-  timeout_sec: 300  # Timeout for client training
-  max_retries: 3  # Max connection retries
-  
-  # Pour Raspberry Pi
-  auto_detect_resources: true  # Détection auto CPU/RAM
-  cpu_affinity: null  # Liste de CPUs à utiliser (null = auto)
-  
-# Paths
+  timeout_sec: 300
+  max_retries: 3
+  auto_detect_resources: true
+  cpu_affinity: nullzz
+
 paths:
   data_dir: "./data"
   models_dir: "./models"
   logs_dir: "./logs"
   results_dir: "./results"
-  
-# ============================================================================
-# NOTES D'UTILISATION
-# ============================================================================
-# 
-# Stratégies disponibles:
-#   - all_layers: FedAvg standard (toutes les couches)
-#   - xfl_cyclic: XFL cyclique (1 couche par client par tour)
-#   - xfl_sparsification: XFL avec sparsification (envoie seulement les valeurs importantes)
-#   - xfl_quantization: XFL avec quantification (réduit la bande passante)
-#
-# ============================================================================

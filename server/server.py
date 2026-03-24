@@ -10,6 +10,8 @@ import base64
 import hashlib
 import secrets
 import os
+import uuid                          # ← NEW: for session_id generation
+import socket                        # ← NEW: for hostname in server_sessions
 import psycopg2
 import psycopg2.extras
 import psycopg2.pool
@@ -25,8 +27,15 @@ from .metrics import ServerMetricsCollector
 import gc
 
 # Database URL for dashboard APIs
-# Default to localhost for local development, Docker will override via environment variable
 DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:newpassword@localhost:5432/xfl_metrics')
+
+# ── NEW: Generate a unique session_id once per process lifetime ───────────────
+# This UUID is created when the server starts (docker-compose up) and never
+# changes until the process exits (docker-compose down).  Every FL round
+# started in this process will be tagged with this session_id so that the
+# History page can group rounds into true "sessions" instead of relying on
+# round-number gap detection.
+CURRENT_SESSION_ID = str(uuid.uuid4())
 
 # Connection pool for database connections
 _connection_pool = None
@@ -44,7 +53,6 @@ def _init_connection_pool():
             return _connection_pool
             
         try:
-            # Parse the database URL to get connection parameters
             db_url = DB_URL.replace('postgresql://', '')
             if '@' in db_url:
                 auth, host_db = db_url.split('@')
@@ -93,21 +101,18 @@ def _get_connection():
     if _connection_pool:
         try:
             conn = _connection_pool.getconn()
-            # Verify the connection is still valid
             try:
                 cursor = conn.cursor()
                 cursor.execute("SELECT 1")
                 cursor.close()
                 return conn
             except:
-                # Connection is invalid, try to get a new one
                 _connection_pool.putconn(conn, close=True)
                 conn = _connection_pool.getconn()
                 return conn
         except Exception as e:
             print(f"⚠️ Warning: Could not get connection from pool: {e}")
     
-    # Fallback: create a new connection
     return psycopg2.connect(DB_URL)
 
 
@@ -131,12 +136,33 @@ def _return_connection(conn):
             pass
 
 
+# ── NEW: Register the current session in the database ────────────────────────
+def _register_server_session():
+    """
+    Insert one row into server_sessions for the current docker-compose up.
+    Called once at startup, after the DB tables have been initialised.
+    """
+    try:
+        conn = psycopg2.connect(DB_URL)
+        cursor = conn.cursor()
+        hostname = socket.gethostname()
+        cursor.execute("""
+            INSERT INTO server_sessions (session_id, started_at, hostname)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (session_id) DO NOTHING
+        """, (CURRENT_SESSION_ID, time.time(), hostname))
+        conn.commit()
+        conn.close()
+        print(f"✅ Server session registered: {CURRENT_SESSION_ID} (host: {hostname})")
+    except Exception as e:
+        print(f"⚠️ Warning: Could not register server session: {e}")
+
+
 def init_fl_config_database():
     """Initialize FL config table in the database"""
     conn = psycopg2.connect(DB_URL)
     cursor = conn.cursor()
 
-    # FL Config table - stores FL configuration and server state
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fl_config (
             id SERIAL PRIMARY KEY,
@@ -192,7 +218,6 @@ def save_fl_config_to_db(config: dict):
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
         
-        # Save each config key as a separate row
         for key, value in config.items():
             cursor.execute("""
                 INSERT INTO fl_config (config_key, config_value, updated_at)
@@ -220,7 +245,6 @@ def load_fl_config_from_db() -> dict:
         
         config = {}
         for key, value in results:
-            # Try to convert to appropriate type
             if value.isdigit():
                 config[key] = int(value)
             else:
@@ -240,7 +264,6 @@ def init_server_state_database():
     conn = psycopg2.connect(DB_URL)
     cursor = conn.cursor()
 
-    # FL Server State table - stores server state like current_round
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS fl_server_state (
             id SERIAL PRIMARY KEY,
@@ -295,7 +318,6 @@ def init_user_database():
     conn = psycopg2.connect(DB_URL)
     cursor = conn.cursor()
 
-    # Users table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
@@ -305,7 +327,6 @@ def init_user_database():
         )
     """)
 
-    # Sessions table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             id SERIAL PRIMARY KEY,
@@ -322,7 +343,6 @@ def init_user_database():
 
 
 def get_user_from_db(username: str):
-    """Get user from database"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
@@ -330,11 +350,7 @@ def get_user_from_db(username: str):
         result = cursor.fetchone()
         conn.close()
         if result:
-            return {
-                'username': result[0],
-                'password': result[1],
-                'created_at': result[2]
-            }
+            return {'username': result[0], 'password': result[1], 'created_at': result[2]}
         return None
     except Exception as e:
         print(f"Error getting user: {e}")
@@ -342,7 +358,6 @@ def get_user_from_db(username: str):
 
 
 def create_user_in_db(username: str, password_hash: str):
-    """Create user in database"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
@@ -359,7 +374,6 @@ def create_user_in_db(username: str, password_hash: str):
 
 
 def create_session_in_db(token: str, username: str):
-    """Create session in database"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
@@ -376,7 +390,6 @@ def create_session_in_db(token: str, username: str):
 
 
 def get_session_from_db(token: str):
-    """Get session from database"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
@@ -384,11 +397,7 @@ def get_session_from_db(token: str):
         result = cursor.fetchone()
         conn.close()
         if result:
-            return {
-                'token': result[0],
-                'username': result[1],
-                'created_at': result[2]
-            }
+            return {'token': result[0], 'username': result[1], 'created_at': result[2]}
         return None
     except Exception as e:
         print(f"Error getting session: {e}")
@@ -396,7 +405,6 @@ def get_session_from_db(token: str):
 
 
 def delete_session_from_db(token: str):
-    """Delete session from database"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
@@ -424,16 +432,6 @@ class FLServer:
         xfl_strategy: str = "all_layers",
         xfl_param: int = 3
     ):
-        """
-        Args:
-            global_model: Initial global model
-            aggregation_strategy: Aggregation method ('fedavg', 'fedprox')
-            num_rounds: Total number of FL rounds
-            clients_per_round: Number of clients per round
-            db_url: PostgreSQL database URL
-            xfl_strategy: XFL layer selection strategy
-            xfl_param: XFL parameter (e.g., N for first_n/last_n)
-        """
         self.global_model = global_model
         self.aggregation_strategy = create_aggregation_strategy(
             aggregation_strategy,
@@ -443,18 +441,17 @@ class FLServer:
         self.num_rounds = num_rounds
         self.clients_per_round = clients_per_round
         
-        # Metrics collector
         self.metrics_collector = ServerMetricsCollector(db_url)
         
-        # State management
-        # Load current_round from database if available
+        # ── NEW: attach the process-level session_id to every server instance ─
+        self.session_id = CURRENT_SESSION_ID
+
         self.current_round = self._load_current_round()
         self.round_in_progress = False
-        self.client_submissions = []  # List of submission dicts
-        self.selected_clients = []  # Clients selected for current round
+        self.client_submissions = []
+        self.selected_clients = []
         self.lock = threading.Lock()
         
-        # Test metrics
         self.test_loader = None
         
         print(f"✅ FLServer initialized")
@@ -462,64 +459,39 @@ class FLServer:
         print(f"   XFL: {xfl_strategy}")
         print(f"   Total rounds: {self.num_rounds}")
         print(f"   Clients per round: {self.clients_per_round}")
+        print(f"   Session ID: {self.session_id}")
         print(f"   Current round (loaded from DB): {self.current_round}")
     
     def _load_current_round(self) -> int:
-        """Load current round from database"""
+        """
+        Load current round from database.
+        ── CHANGED: only look at rounds that belong to the CURRENT session_id ──
+        This guarantees that after docker-compose down/up, round numbering
+        restarts from 0 within the new session, rather than continuing from the
+        previous session's last round.
+        """
         try:
-            # Try to get from server state first
-            saved_round = get_server_state('current_round')
-            
-            if saved_round:
-                # Check if the saved round has corresponding metrics in round_metrics
-                # If there's no metrics for this round, it might be an incomplete round
-                conn = psycopg2.connect(DB_URL)
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT global_test_accuracy, metrics_json 
-                    FROM round_metrics 
-                    WHERE round_number = %s
-                """, (int(saved_round),))
-                result = cursor.fetchone()
-                conn.close()
-                
-                if result:
-                    # Check if this is an incomplete round (no accuracy yet)
-                    accuracy = result[0]
-                    metrics_json = result[1]
-                    
-                    if accuracy is None or (metrics_json and metrics_json.get('status') == 'in_progress'):
-                        # This is an incomplete round - fall back to previous completed round
-                        conn = psycopg2.connect(DB_URL)
-                        cursor = conn.cursor()
-                        cursor.execute("""
-                            SELECT MAX(round_number) 
-                            FROM round_metrics 
-                            WHERE global_test_accuracy IS NOT NULL
-                        """)
-                        max_completed = cursor.fetchone()
-                        conn.close()
-                        
-                        if max_completed and max_completed[0]:
-                            print(f"⚠️  Warning: Round {saved_round} appears incomplete, using round {max_completed[0]}")
-                            return max_completed[0]
-                
-                return int(saved_round)
-            
-            # Fallback: get max round from round_metrics
             conn = psycopg2.connect(DB_URL)
             cursor = conn.cursor()
-            cursor.execute("SELECT MAX(round_number) FROM round_metrics")
+
+            # Get the highest completed round for THIS session only
+            cursor.execute("""
+                SELECT MAX(round_number)
+                FROM round_metrics
+                WHERE session_id = %s AND global_test_accuracy IS NOT NULL
+            """, (self.session_id,))
             result = cursor.fetchone()
             conn.close()
+
             if result and result[0]:
                 return result[0]
+
         except Exception as e:
             print(f"⚠️  Warning: Could not load current round from database: {e}")
         return 0
     
     def _save_current_round(self):
-        """Save current round to database"""
+        """Save current round to database (kept for compatibility)"""
         try:
             save_server_state('current_round', str(self.current_round))
         except Exception as e:
@@ -541,20 +513,17 @@ class FLServer:
                     "message": "Round already in progress"
                 }
 
-            # Reload config from database to get latest values (fix for config not being synced)
+            # Reload config from database to get latest values
             try:
                 latest_config = load_fl_config_from_db()
                 if latest_config:
-                    # Update fl_config with latest values from database
                     for key, value in latest_config.items():
                         fl_config[key] = value
                     
-                    # Update server's clients_per_round from config if explicitly set
                     if 'clientsPerRound' in latest_config:
                         self.clients_per_round = int(latest_config['clientsPerRound'])
                         print(f"✅ Using clientsPerRound from config: {self.clients_per_round}")
                     
-                    # Update num_rounds if set in config
                     if 'numRounds' in latest_config:
                         self.num_rounds = int(latest_config['numRounds'])
                         print(f"✅ Using numRounds from config: {self.num_rounds}")
@@ -563,40 +532,37 @@ class FLServer:
 
             self.current_round += 1
             self.round_in_progress = True
-            self.client_submissions = []  # Reset submissions list
+            self.client_submissions = []
 
-            # Save current round to database for persistence
             self._save_current_round()
 
-            # Save placeholder round metrics when round starts (to preserve data on restart)
-            # This ensures the round is tracked even if server restarts before aggregation
+            # Save placeholder round metrics tagged with session_id
             try:
                 self.metrics_collector.store_round_metrics(
                     round_number=self.current_round,
-                    num_clients=0,  # Will be updated after aggregation
-                    aggregation_time=0,  # Will be updated after aggregation
-                    global_test_loss=None,  # Will be updated after aggregation
-                    global_test_accuracy=None,  # Will be updated after aggregation
-                    total_samples=0,  # Will be updated after aggregation
-                    additional_metrics={"status": "in_progress", "clients_expected": self.clients_per_round}
+                    num_clients=0,
+                    aggregation_time=0,
+                    global_test_loss=None,
+                    global_test_accuracy=None,
+                    total_samples=0,
+                    session_id=self.session_id,          # ← pass session_id
+                    additional_metrics={
+                        "status": "in_progress",
+                        "clients_expected": self.clients_per_round
+                    }
                 )
-                print(f"✅ Round {self.current_round} metrics placeholder saved")
+                print(f"✅ Round {self.current_round} metrics placeholder saved (session: {self.session_id})")
             except Exception as e:
                 print(f"⚠️  Warning: Could not save round metrics placeholder: {e}")
 
-            # Select clients for this round (for dashboard display)
-            # Use the configured numClients from fl_config
             import random
             total_clients = int(fl_config.get('numClients', 40))
-            
-            # Ensure clients_per_round doesn't exceed total_clients
             actual_clients_per_round = min(self.clients_per_round, total_clients)
-            
             self.selected_clients = random.sample(range(total_clients), actual_clients_per_round)
 
-            # Get XFL info for logging
             xfl_info = self.aggregation_strategy.get_xfl_info()
             print(f"\n🔄 Starting Round {self.current_round}/{self.num_rounds}")
+            print(f"   Session: {self.session_id}")
             print(f"   Total clients available: {total_clients}")
             print(f"   Clients selected per round: {actual_clients_per_round}")
             print(f"   Selected clients: {self.selected_clients}")
@@ -626,14 +592,12 @@ class FLServer:
                     "message": "No round in progress"
                 }
 
-            # Check for duplicate submission from same client
             if any(sub["client_id"] == client_id for sub in self.client_submissions):
                 return {
                     "status": "duplicate",
                     "message": f"Client {client_id} has already submitted for this round"
                 }
 
-            # Store submission
             self.client_submissions.append({
                 "client_id": client_id,
                 "weights": model_weights,
@@ -642,7 +606,6 @@ class FLServer:
                 "quantization_meta": quantization_meta
             })
 
-            # Store client metrics in database
             self.metrics_collector.store_client_metrics(
                 self.current_round,
                 client_id,
@@ -652,7 +615,6 @@ class FLServer:
             print(f"   ✅ Received update from Client {client_id} "
                   f"({len(self.client_submissions)}/{self.clients_per_round})")
 
-            # Check if all clients submitted
             if len(self.client_submissions) >= self.clients_per_round:
                 self._aggregate_round()
 
@@ -670,37 +632,29 @@ class FLServer:
         start_time = time.time()
 
         try:
-            # Extract weights and sample counts
             client_weights = [sub["weights"] for sub in self.client_submissions]
             client_num_samples = [sub["num_samples"] for sub in self.client_submissions]
 
-            # Check if any quantization metadata is present (for XFL quantization)
             has_quantization = any(sub.get("quantization_meta") for sub in self.client_submissions)
 
             if has_quantization and xfl_info['variant'] == 'quantization':
                 print("   🔧 Applying dequantization before aggregation...")
-                # Dequantize weights before aggregation
                 client_weights = self._dequantize_client_weights(client_weights)
 
-            # Aggregate with XFL
             aggregated_weights = self.aggregation_strategy.aggregate(
                 client_weights,
                 client_num_samples
             )
 
-            # Update global model
             if isinstance(self.aggregation_strategy, XFL):
-                # For XFL, aggregated_weights contains only updated layers
                 current_state = self.global_model.state_dict()
                 current_state.update(aggregated_weights)
                 self.global_model.load_state_dict(current_state)
             else:
-                # For FedAvg variants, aggregated_weights contains all layers
                 self.global_model.load_state_dict(aggregated_weights)
 
             aggregation_time = time.time() - start_time
 
-            # Evaluate global model
             test_loss, test_accuracy = None, None
             if self.test_loader is not None:
                 try:
@@ -709,8 +663,8 @@ class FLServer:
                     print(f"⚠️  Global model evaluation failed: {e}")
                     test_loss, test_accuracy = None, None
 
-            # Store round metrics with the strategy used
             xfl_info = self.aggregation_strategy.get_xfl_info()
+            # ── CHANGED: pass session_id when storing the completed round ─────
             self.metrics_collector.store_round_metrics(
                 round_number=self.current_round,
                 num_clients=len(self.client_submissions),
@@ -718,8 +672,12 @@ class FLServer:
                 global_test_loss=test_loss,
                 global_test_accuracy=test_accuracy,
                 total_samples=sum(client_num_samples),
-                strategy=xfl_info['strategy']
-            )
+                strategy=xfl_info['strategy'],
+                session_id=self.session_id,
+                additional_metrics={
+                    "submitted_clients": [sub["client_id"] for sub in self.client_submissions]
+                    }
+                    )
 
             print(f"✅ Round {self.current_round} completed in {aggregation_time:.2f}s")
             if test_accuracy is not None:
@@ -730,15 +688,11 @@ class FLServer:
             print(f"❌ Aggregation failed for round {self.current_round}: {e}")
             print(f"   Round will be completed anyway to prevent blocking")
 
-        # Save current round to database for persistence (backup after aggregation)
         self._save_current_round()
 
-        # Reset round state
         self.round_in_progress = False
-        self.client_submissions = []  # Clear submissions after aggregation
+        self.client_submissions = []
         
-        # Force garbage collection to free memory after aggregation
-        # This is especially important when handling large model weights from many clients
         gc.collect()
         print(f"🧹 Garbage collection triggered after round {self.current_round}")
     
@@ -770,9 +724,6 @@ class FLServer:
         return avg_loss, accuracy
 
     def _dequantize_client_weights(self, client_weights: List[OrderedDict]) -> List[OrderedDict]:
-        """
-        Dequantize client weights before aggregation for XFL quantization
-        """
         dequantized_weights = []
 
         for i, client_weight in enumerate(client_weights):
@@ -796,19 +747,15 @@ class FLServer:
         return dequantized_weights
 
     def get_global_model(self) -> OrderedDict:
-        """Get current global model weights"""
         with self.lock:
             return self.global_model.state_dict()
     
     def get_server_status(self) -> Dict[str, Any]:
-        """Get current server status with XFL info"""
         with self.lock:
             xfl_info = self.aggregation_strategy.get_xfl_info()
             layer_names = list(self.global_model.state_dict().keys())
             num_layers = len(set(name.split('.')[0] for name in layer_names))
             
-            # Get total_clients from fl_config - this is the TOTAL number of clients available in the system
-            # NOT the number of clients that participated in the last round
             total_clients = int(fl_config.get('numClients', 40))
             latest_accuracy = None
             
@@ -816,7 +763,6 @@ class FLServer:
                 conn = psycopg2.connect(DB_URL)
                 cursor = conn.cursor()
                 
-                # Get latest accuracy from completed rounds
                 cursor.execute("""
                     SELECT global_test_accuracy
                     FROM round_metrics
@@ -844,11 +790,11 @@ class FLServer:
                 "selected_clients": self.selected_clients if self.round_in_progress else [],
                 "xfl_strategy": xfl_info['strategy'],
                 "xfl_param": xfl_info['param'],
-                "num_layers": num_layers
+                "num_layers": num_layers,
+                "session_id": self.session_id        # ← expose for debugging
             }
     
     def set_xfl_strategy(self, strategy: str, param: int = 3) -> Dict[str, Any]:
-        """Change XFL strategy dynamically"""
         with self.lock:
             if self.round_in_progress:
                 return {
@@ -873,13 +819,10 @@ class FLServer:
 app = Flask(__name__)
 CORS(app)
 
-# Secret key for sessions
 app.secret_key = 'xfl-rpilab-secret-key-change-in-production'
 
-# Global server instance
 fl_server: FLServer = None
 
-# Global configuration storage (default values)
 fl_config = {
     "numClients": 40,
     "numRounds": 50,
@@ -891,11 +834,9 @@ fl_config = {
     "localEpochs": 2,
     "batchSize": 512,
     "learningRate": 0.01,
-    # Network Parameters
     "networkLatency": 0,
     "networkBandwidth": 10,
     "networkPacketLoss": 0,
-    # System Parameters
     "cpuLimit": 100,
     "ramLimit": 2048,
 }
@@ -905,6 +846,8 @@ try:
     init_user_database()
     init_fl_config_database()
     init_server_state_database()
+    # ── NEW: register this docker-compose up as a new session ────────────────
+    _register_server_session()
 except Exception as e:
     print(f"⚠️  Database initialization warning: {e}")
     print("   Server will continue but auth features may not work properly")
@@ -915,17 +858,10 @@ try:
     if loaded_config:
         fl_config.update(loaded_config)
         print("✅ FL config loaded from database")
-        
-        # Note: We no longer update clients_per_round from numClients at startup
-        # The server should use the clients_per_round value from its initialization
-        # or from the clientsPerRound config key if explicitly set
 except Exception as e:
     print(f"⚠️  Warning: Could not load FL config from database: {e}")
 
-# Simple user storage (in production, use a proper database)
 users_db = {}
-
-# In-memory session storage
 sessions = {}
 
 
@@ -938,34 +874,22 @@ def save_config():
     if data is None:
         return jsonify({"error": "Invalid JSON data"}), 400
     
-    # Update configuration
     fl_config.update(data)
-    
-    # Save to database for persistence
     save_fl_config_to_db(fl_config)
     
-    # Apply strategy if changed
     if fl_server is not None and 'strategy' in data:
         strategy = data.get('strategy', 'all_layers')
         param = data.get('xflParam', 3)
         fl_server.set_xfl_strategy(strategy, param)
     
-    # Note: We no longer update clients_per_round from numClients
-    # numClients = total number of clients available (from docker-compose)
-    # clients_per_round = number of clients to select per round (default 5)
-    # These are two separate settings!
-    
-    # If user explicitly sets clientsPerRound, update it
     if fl_server is not None and 'clientsPerRound' in data:
         fl_server.clients_per_round = int(data['clientsPerRound'])
         print(f"✅ Updated clients_per_round to {fl_server.clients_per_round}")
     
-    # Also update the fl_config dictionary with the new clientsPerRound value
     if 'clientsPerRound' in data:
         fl_config['clientsPerRound'] = int(data['clientsPerRound'])
         print(f"✅ Updated fl_config clientsPerRound to {fl_config['clientsPerRound']}")
     
-    # Update numRounds in fl_server if it was changed
     if fl_server is not None and 'numRounds' in data:
         old_num_rounds = fl_server.num_rounds
         fl_server.num_rounds = int(data['numRounds'])
@@ -977,13 +901,11 @@ def save_config():
 
 @app.route('/api/config', methods=['GET'])
 def get_config():
-    """Get current FL configuration"""
     return jsonify({"config": fl_config})
 
 
 @app.route('/api/register', methods=['POST'])
 def register():
-    """Register a new user"""
     try:
         data = request.get_json()
         
@@ -996,15 +918,12 @@ def register():
         if not username or not password:
             return jsonify({"error": "Username and password are required"}), 400
         
-        # Check if user already exists in database
         existing_user = get_user_from_db(username)
         if existing_user:
             return jsonify({"error": "Username already exists"}), 409
         
-        # Simple password hashing
         hashed_password = hashlib.sha256(password.encode()).hexdigest()
         
-        # Create user in database
         success = create_user_in_db(username, hashed_password)
         if not success:
             return jsonify({"error": "Registration failed. Please try again."}), 500
@@ -1017,7 +936,6 @@ def register():
 
 @app.route('/api/login', methods=['POST'])
 def login():
-    """Login user"""
     data = request.get_json()
     
     username = data.get('username')
@@ -1026,7 +944,6 @@ def login():
     if not username or not password:
         return jsonify({"error": "Username and password are required"}), 400
     
-    # Get user from database
     user = get_user_from_db(username)
     if not user:
         return jsonify({"error": "Invalid username or password"}), 401
@@ -1036,7 +953,6 @@ def login():
     if user['password'] != hashed_password:
         return jsonify({"error": "Invalid username or password"}), 401
     
-    # Create session in database
     token = secrets.token_hex(16)
     create_session_in_db(token, username)
     
@@ -1050,7 +966,6 @@ def login():
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
-    """Logout user"""
     data = request.get_json()
     token = data.get('token')
     
@@ -1062,35 +977,28 @@ def logout():
 
 @app.route('/api/verify_token', methods=['POST'])
 def verify_token():
-    """Verify if a token is valid"""
     data = request.get_json()
     token = data.get('token')
     
     session = get_session_from_db(token)
     if session:
-        return jsonify({
-            "status": "valid",
-            "username": session['username']
-        }), 200
+        return jsonify({"status": "valid", "username": session['username']}), 200
     
     return jsonify({"status": "invalid"}), 401
 
 
 def weights_to_base64(weights: OrderedDict) -> str:
-    """Serialize weights to base64 string"""
     weights_bytes = pickle.dumps(weights)
     return base64.b64encode(weights_bytes).decode('utf-8')
 
 
 def base64_to_weights(base64_str: str) -> OrderedDict:
-    """Deserialize weights from base64 string"""
     weights_bytes = base64.b64decode(base64_str.encode('utf-8'))
     return pickle.loads(weights_bytes)
 
 
 @app.route('/api/status', methods=['GET'])
 def status():
-    """Get server status with XFL info"""
     if fl_server is None:
         return jsonify({"status": "initializing"}), 200
 
@@ -1099,7 +1007,6 @@ def status():
 
 @app.route('/api/start_round', methods=['POST'])
 def start_round():
-    """Start a new FL round"""
     if fl_server is None:
         return jsonify({"error": "Server not initialized"}), 500
     
@@ -1107,9 +1014,8 @@ def start_round():
     return jsonify(result)
 
 
-@ app.route('/api/get_global_model', methods=['GET'])
+@app.route('/api/get_global_model', methods=['GET'])
 def get_global_model():
-    """Get current global model weights"""
     if fl_server is None:
         return jsonify({"error": "Server not initialized"}), 500
 
@@ -1118,10 +1024,7 @@ def get_global_model():
 
     xfl_info = fl_server.aggregation_strategy.get_xfl_info()
 
-    # Get dataset name from fl_config (set by user in Config page)
     dataset_name = fl_config.get('dataset', 'MNIST')
-    
-    # Get data distribution from fl_config
     data_distribution = fl_config.get('dataDistribution', 'iid')
 
     return jsonify({
@@ -1138,7 +1041,6 @@ def get_global_model():
 
 @app.route('/api/submit_update', methods=['POST'])
 def submit_update():
-    """Receive client model update"""
     if fl_server is None:
         return jsonify({"error": "Server not initialized"}), 500
     
@@ -1168,7 +1070,6 @@ def submit_update():
 
 @app.route('/api/xfl/set_strategy', methods=['POST'])
 def set_xfl_strategy():
-    """Set XFL strategy dynamically"""
     if fl_server is None:
         return jsonify({"error": "Server not initialized"}), 500
     
@@ -1182,7 +1083,6 @@ def set_xfl_strategy():
 
 @app.route('/api/xfl/get_strategy', methods=['GET'])
 def get_xfl_strategy():
-    """Get current XFL strategy"""
     if fl_server is None:
         return jsonify({"error": "Server not initialized"}), 500
     
@@ -1192,7 +1092,6 @@ def get_xfl_strategy():
 
 @app.route('/api/metrics/summary', methods=['GET'])
 def get_metrics_summary():
-    """Get metrics summary"""
     if fl_server is None:
         return jsonify({"error": "Server not initialized"}), 500
     
@@ -1202,12 +1101,10 @@ def get_metrics_summary():
 
 @app.route('/api/accuracy', methods=['GET'])
 def get_accuracy_data():
-    """Get accuracy data for plotting"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
 
-        # Only get completed rounds (where global_test_accuracy is NOT NULL)
         cursor.execute("""
             SELECT round_number, global_test_accuracy
             FROM round_metrics
@@ -1221,10 +1118,7 @@ def get_accuracy_data():
         rounds = [row[0] for row in data]
         accuracy = [round(row[1], 2) if row[1] is not None else None for row in data]
 
-        return jsonify({
-            "rounds": rounds,
-            "accuracy": accuracy
-        })
+        return jsonify({"rounds": rounds, "accuracy": accuracy})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1232,12 +1126,10 @@ def get_accuracy_data():
 
 @app.route('/api/loss', methods=['GET'])
 def get_loss_data():
-    """Get loss data for plotting"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
 
-        # Only get completed rounds (where global_test_loss is NOT NULL)
         cursor.execute("""
             SELECT round_number, global_test_loss
             FROM round_metrics
@@ -1251,10 +1143,7 @@ def get_loss_data():
         rounds = [row[0] for row in data]
         loss = [round(row[1], 4) if row[1] is not None else None for row in data]
 
-        return jsonify({
-            "rounds": rounds,
-            "loss": loss
-        })
+        return jsonify({"rounds": rounds, "loss": loss})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1262,8 +1151,6 @@ def get_loss_data():
 
 @app.route('/api/clients', methods=['GET'])
 def get_clients_data():
-    """Get client metrics"""
-    # Use numClients from fl_config, fallback to environment variable or default 40
     expected_clients = int(fl_config.get('numClients', os.getenv('NUM_CLIENTS', '40')))
 
     client_data_map = {}
@@ -1290,15 +1177,25 @@ def get_clients_data():
         data = cursor.fetchall()
         client_data_map = {row[0]: row for row in data}
 
-        cursor.execute("SELECT MAX(round_number) FROM round_metrics")
+        cursor.execute("""
+                       SELECT MAX(round_number) FROM round_metrics
+                       WHERE global_test_accuracy IS NOT NULL
+                       """)
         last_completed_round = cursor.fetchone()[0] or 0
 
         cursor.execute("""
-            SELECT DISTINCT client_id
-            FROM client_metrics
-            WHERE round_number = %s
-        """, (last_completed_round,))
-        active_in_last_round = set(row[0] for row in cursor.fetchall())
+                       SELECT metrics_json FROM round_metrics
+                       WHERE round_number = %s AND global_test_accuracy IS NOT NULL
+                       """, (last_completed_round,))
+        row = cursor.fetchone()
+        if row and row[0] and 'submitted_clients' in row[0]:
+            active_in_last_round = set(row[0]['submitted_clients'])
+        else:
+            cursor.execute("""
+                           SELECT DISTINCT client_id FROM client_metrics
+                           WHERE round_number = %s
+                           """, (last_completed_round,))
+            active_in_last_round = set(r[0] for r in cursor.fetchall())
 
         conn.close()
     except Exception as e:
@@ -1313,17 +1210,10 @@ def get_clients_data():
         server_status = fl_server.get_server_status()
         round_in_progress = server_status.get('round_in_progress', False)
         
-        # Debug logging
-        print(f"[DEBUG] /api/clients - round_in_progress: {round_in_progress}")
-        
         if round_in_progress:
             current_round = server_status.get('current_round', last_completed_round)
             submitted_clients = set(server_status.get('submitted_clients', []))
             selected_clients = set(server_status.get('selected_clients', []))
-            
-            print(f"[DEBUG] /api/clients - current_round: {current_round}")
-            print(f"[DEBUG] /api/clients - submitted_clients: {submitted_clients}")
-            print(f"[DEBUG] /api/clients - selected_clients: {selected_clients}")
         else:
             selected_clients = set()
 
@@ -1331,16 +1221,12 @@ def get_clients_data():
     for client_id in range(expected_clients):
         if round_in_progress:
             if client_id in submitted_clients:
-                # Client has submitted this round - show as active (green)
                 state = "active"
             elif client_id in selected_clients:
-                # Client is selected for this round but hasn't submitted yet - show as training (blue)
                 state = "training"
             else:
-                # Client is not selected for this round - show as idle (gray)
                 state = "idle"
         else:
-            # No round in progress - show last round's active clients or idle
             if client_id in active_in_last_round:
                 state = "active"
             else:
@@ -1373,7 +1259,6 @@ def get_clients_data():
 
 @app.route('/api/bandwidth', methods=['GET'])
 def get_bandwidth_data():
-    """Get bandwidth usage per client"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
@@ -1392,10 +1277,7 @@ def get_bandwidth_data():
         labels = [f"Pi {str(row[0]).zfill(2)}" for row in data]
         values = [round(row[1], 2) if row[1] else 0 for row in data]
 
-        return jsonify({
-            "labels": labels,
-            "values": values
-        })
+        return jsonify({"labels": labels, "values": values})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1403,7 +1285,6 @@ def get_bandwidth_data():
 
 @app.route('/api/latency', methods=['GET'])
 def get_latency_data():
-    """Get latency data for plotting"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
@@ -1421,10 +1302,7 @@ def get_latency_data():
         rounds = [row[0] for row in data]
         latency = [round(row[1], 2) if row[1] else None for row in data]
 
-        return jsonify({
-            "rounds": rounds,
-            "latency": latency
-        })
+        return jsonify({"rounds": rounds, "latency": latency})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1432,7 +1310,6 @@ def get_latency_data():
 
 @app.route('/api/energy', methods=['GET'])
 def get_energy_data():
-    """Get energy consumption data for plotting"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
@@ -1450,10 +1327,7 @@ def get_energy_data():
         rounds = [row[0] for row in data]
         energy = [round(row[1], 4) if row[1] else None for row in data]
 
-        return jsonify({
-            "rounds": rounds,
-            "energy": energy
-        })
+        return jsonify({"rounds": rounds, "energy": energy})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1461,7 +1335,6 @@ def get_energy_data():
 
 @app.route('/api/network_metrics', methods=['GET'])
 def get_network_metrics_data():
-    """Get network metrics (packet loss and jitter) for plotting"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
@@ -1482,11 +1355,7 @@ def get_network_metrics_data():
         packet_loss = [round(row[1] * 100, 4) if row[1] else None for row in data]
         jitter = [round(row[2], 2) if row[2] else None for row in data]
 
-        return jsonify({
-            "rounds": rounds,
-            "packet_loss": packet_loss,
-            "jitter": jitter
-        })
+        return jsonify({"rounds": rounds, "packet_loss": packet_loss, "jitter": jitter})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1494,13 +1363,10 @@ def get_network_metrics_data():
 
 @app.route('/api/rounds_history', methods=['GET'])
 def get_rounds_history():
-    """Get detailed history of all rounds (completed and in-progress)"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
 
-        # Get ALL rounds - both completed and in-progress
-        # This ensures the frontend always gets data, even if no rounds are completed yet
         cursor.execute("""
             SELECT round_number,
                    global_test_accuracy,
@@ -1519,8 +1385,7 @@ def get_rounds_history():
 
         rounds = []
         for row in data:
-            # Determine if round is completed or in-progress
-            is_completed = row[1] is not None  # global_test_accuracy is not null
+            is_completed = row[1] is not None
             
             rounds.append({
                 "round": row[0],
@@ -1541,17 +1406,23 @@ def get_rounds_history():
 @app.route('/api/history_by_strategy', methods=['GET'])
 def get_history_by_strategy():
     """
-    Get history data grouped by strategy and experiments/sessions.
+    Get history data grouped by strategy and sessions.
+
+    ── CHANGED: sessions are now real docker-compose up/down boundaries ──────
+    Each distinct (strategy, session_id) pair becomes one "experiment" in the
+    History page.  No more round-number gap detection.
+
     Returns:
     - List of strategies used
-    - For each strategy: list of experiments (sessions)
-    - Each experiment: rounds data, accuracy evolution, config used
+    - For each strategy: list of sessions (experiments)
+    - Each session: rounds data, accuracy/loss evolution, config used,
+      started_at timestamp from server_sessions
     """
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
 
-        # First, get all distinct strategies used
+        # Get all distinct strategies that have at least one completed round
         cursor.execute("""
             SELECT DISTINCT strategy 
             FROM round_metrics 
@@ -1560,171 +1431,180 @@ def get_history_by_strategy():
         """)
         strategies = [row[0] for row in cursor.fetchall()]
         
-        # If no strategies found, return empty data
         if not strategies:
             conn.close()
-            return jsonify({
-                "strategies": [],
-                "message": "No completed rounds found"
-            })
+            return jsonify({"strategies": [], "message": "No completed rounds found"})
 
-        # For each strategy, find experiments (sessions) - continuous sequences of rounds
-        # An experiment ends when there's a gap in rounds or strategy changes
+        # Build a lookup of session metadata (started_at, hostname)
+        cursor.execute("SELECT session_id, started_at, hostname FROM server_sessions")
+        session_meta = {row[0]: {"started_at": row[1], "hostname": row[2]} for row in cursor.fetchall()}
+
         result = []
         
         for strategy in strategies:
-            # Get all completed rounds for this strategy, ordered by round_number
+            # Get all distinct session_ids for this strategy, ordered by first round timestamp
             cursor.execute("""
-                SELECT round_number, global_test_accuracy, global_test_loss, 
-                       aggregation_time_sec, num_clients, timestamp, metrics_json
+                           SELECT rm.session_id
+                           FROM round_metrics rm
+                           LEFT JOIN server_sessions ss ON ss.session_id = rm.session_id
+                           WHERE rm.strategy = %s
+                           AND rm.global_test_accuracy IS NOT NULL
+                           AND rm.session_id IS NOT NULL
+                           GROUP BY rm.session_id, ss.started_at
+                           ORDER BY ss.started_at ASC NULLS LAST
+                           """, (strategy,))
+            session_ids = [row[0] for row in cursor.fetchall()]
+
+            # Also handle legacy rows that have no session_id (NULL) – treat them
+            # as a single legacy "session" so old data is not lost
+            cursor.execute("""
+                SELECT COUNT(*)
                 FROM round_metrics
-                WHERE strategy = %s AND global_test_accuracy IS NOT NULL
-                ORDER BY round_number
+                WHERE strategy = %s AND global_test_accuracy IS NOT NULL AND session_id IS NULL
             """, (strategy,))
-            
-            rounds_data = cursor.fetchall()
-            
-            # Group rounds into experiments (sessions)
-            # A new session starts when there's a gap > 1 in round numbers
+            legacy_count = cursor.fetchone()[0]
+
             experiments = []
-            current_experiment = {
-                "experiment_id": 1,
-                "rounds": [],
-                "accuracy_evolution": [],
-                "loss_evolution": [],
-                "config": None
-            }
-            
-            for idx, row in enumerate(rounds_data):
-                round_num = row[0]
-                accuracy = round(row[1], 2) if row[1] else None
-                loss = round(row[2], 4) if row[2] else None
-                agg_time = round(row[3], 2) if row[3] else None
-                num_clients = row[4]
-                timestamp = row[5]
-                metrics_json = row[6]
-                
-                # Check if this is a new experiment (gap in round numbers)
-                if idx > 0 and round_num - rounds_data[idx-1][0] > 1:
-                    # Save current experiment and start a new one
-                    experiments.append(current_experiment)
-                    current_experiment = {
-                        "experiment_id": len(experiments) + 1,
-                        "rounds": [],
-                        "accuracy_evolution": [],
-                        "loss_evolution": [],
-                        "config": None
-                    }
-                
-                # Add round data
-                current_experiment["rounds"].append({
-                    "round": round_num,
-                    "accuracy": accuracy,
-                    "loss": loss,
-                    "agg_time": agg_time,
-                    "clients": num_clients,
-                    "timestamp": timestamp
-                })
-                
-                if accuracy is not None:
-                    current_experiment["accuracy_evolution"].append({
-                        "round": round_num,
-                        "accuracy": accuracy
-                    })
-                
-                if loss is not None:
-                    current_experiment["loss_evolution"].append({
-                        "round": round_num,
-                        "loss": loss
-                    })
-            
-            # Don't forget the last experiment
-            experiments.append(current_experiment)
-            
-            # For each experiment, get the config that was active at the start
-            for exp in experiments:
-                if exp["rounds"]:
-                    first_round = exp["rounds"][0]["round"]
-                    # Get config from fl_config table at approximately that time
-                    # We'll get the latest config before or at that round
-                    cursor.execute("""
-                        SELECT config_key, config_value 
-                        FROM fl_config
-                        ORDER BY updated_at
-                    """)
-                    config_rows = cursor.fetchall()
-                    
-                    config_dict = {}
-                    for key, value in config_rows:
-                        # Try to convert to appropriate type
-                        if value and value.isdigit():
-                            config_dict[key] = int(value)
-                        else:
-                            try:
-                                config_dict[key] = float(value)
-                            except:
-                                config_dict[key] = value
-                    
-                    exp["config"] = config_dict
+            experiment_counter = 1
 
-            # Calculate statistics for each experiment
-            for exp in experiments:
-                if exp["rounds"]:
-                    accuracies = [r["accuracy"] for r in exp["rounds"] if r["accuracy"] is not None]
-                    losses = [r["loss"] for r in exp["rounds"] if r["loss"] is not None]
-                    agg_times = [r["agg_time"] for r in exp["rounds"] if r["agg_time"] is not None]
-                    
-                    exp["stats"] = {
-                        "total_rounds": len(exp["rounds"]),
-                        "best_accuracy": max(accuracies) if accuracies else None,
-                        "final_accuracy": accuracies[-1] if accuracies else None,
-                        "avg_loss": sum(losses) / len(losses) if losses else None,
-                        "avg_agg_time": sum(agg_times) / len(agg_times) if agg_times else None,
-                        "first_round": exp["rounds"][0]["round"],
-                        "last_round": exp["rounds"][-1]["round"]
-                    }
-                else:
-                    exp["stats"] = {
-                        "total_rounds": 0,
-                        "best_accuracy": None,
-                        "final_accuracy": None,
-                        "avg_loss": None,
-                        "avg_agg_time": None,
-                        "first_round": 0,
-                        "last_round": 0
-                    }
+            # ── Process NULL-session (legacy) rows first ───────────────────
+            if legacy_count > 0:
+                cursor.execute("""
+                    SELECT round_number, global_test_accuracy, global_test_loss,
+                           aggregation_time_sec, num_clients, timestamp, metrics_json
+                    FROM round_metrics
+                    WHERE strategy = %s AND global_test_accuracy IS NOT NULL AND session_id IS NULL
+                    ORDER BY round_number
+                """, (strategy,))
+                rows = cursor.fetchall()
 
-            # Add strategy info to result
+                exp = _build_experiment(rows, experiment_counter, session_id=None,
+                                        session_meta=session_meta, cursor=cursor)
+                exp["is_legacy"] = True
+                experiments.append(exp)
+                experiment_counter += 1
+
+            # ── Process each real session ──────────────────────────────────
+            for sid in session_ids:
+                cursor.execute("""
+                    SELECT round_number, global_test_accuracy, global_test_loss,
+                           aggregation_time_sec, num_clients, timestamp, metrics_json
+                    FROM round_metrics
+                    WHERE strategy = %s AND global_test_accuracy IS NOT NULL AND session_id = %s
+                    ORDER BY round_number
+                """, (strategy, sid))
+                rows = cursor.fetchall()
+
+                if not rows:
+                    continue
+
+                exp = _build_experiment(rows, experiment_counter, session_id=sid,
+                                        session_meta=session_meta, cursor=cursor)
+                exp["is_legacy"] = False
+                experiments.append(exp)
+                experiment_counter += 1
+
             result.append({
                 "strategy": strategy,
                 "experiments": experiments,
                 "total_experiments": len(experiments),
-                "total_rounds": sum(len(exp["rounds"]) for exp in experiments)
+                "total_rounds": sum(len(e["rounds"]) for e in experiments)
             })
 
         conn.close()
         
-        return jsonify({
-            "strategies": result
-        })
+        return jsonify({"strategies": result})
 
     except Exception as e:
         print(f"Error in /api/history_by_strategy: {e}")
         return jsonify({"error": str(e)}), 500
 
 
+def _build_experiment(rows, experiment_id: int, session_id, session_meta: dict, cursor) -> dict:
+    """
+    Helper: build an experiment dict from a list of DB rows for one session.
+    Each row: (round_number, accuracy, loss, agg_time, num_clients, timestamp, metrics_json)
+    """
+    accuracy_evolution = []
+    loss_evolution = []
+    rounds_list = []
+
+    for row in rows:
+        round_num, accuracy, loss, agg_time, num_clients, timestamp, metrics_json = row
+
+        accuracy = round(accuracy, 2) if accuracy is not None else None
+        loss = round(loss, 4) if loss is not None else None
+        agg_time = round(agg_time, 2) if agg_time is not None else None
+
+        rounds_list.append({
+            "round": round_num,
+            "accuracy": accuracy,
+            "loss": loss,
+            "agg_time": agg_time,
+            "clients": num_clients,
+            "timestamp": timestamp
+        })
+
+        if accuracy is not None:
+            accuracy_evolution.append({"round": round_num, "accuracy": accuracy})
+        if loss is not None:
+            loss_evolution.append({"round": round_num, "loss": loss})
+
+    # Statistics
+    accuracies = [r["accuracy"] for r in rounds_list if r["accuracy"] is not None]
+    losses = [r["loss"] for r in rounds_list if r["loss"] is not None]
+    agg_times = [r["agg_time"] for r in rounds_list if r["agg_time"] is not None]
+
+    stats = {
+        "total_rounds": len(rounds_list),
+        "best_accuracy": max(accuracies) if accuracies else None,
+        "final_accuracy": accuracies[-1] if accuracies else None,
+        "avg_loss": sum(losses) / len(losses) if losses else None,
+        "avg_agg_time": sum(agg_times) / len(agg_times) if agg_times else None,
+        "first_round": rounds_list[0]["round"] if rounds_list else 0,
+        "last_round": rounds_list[-1]["round"] if rounds_list else 0
+    }
+
+    # Session metadata
+    meta = session_meta.get(session_id, {}) if session_id else {}
+    started_at = meta.get("started_at")
+    hostname = meta.get("hostname")
+
+    # Config snapshot (latest values – same as before)
+    cursor.execute("SELECT config_key, config_value FROM fl_config ORDER BY updated_at")
+    config_rows = cursor.fetchall()
+    config_dict = {}
+    for key, value in config_rows:
+        if value and value.isdigit():
+            config_dict[key] = int(value)
+        else:
+            try:
+                config_dict[key] = float(value)
+            except:
+                config_dict[key] = value
+
+    return {
+        "experiment_id": experiment_id,
+        "session_id": session_id,
+        "started_at": started_at,
+        "hostname": hostname,
+        "rounds": rounds_list,
+        "accuracy_evolution": accuracy_evolution,
+        "loss_evolution": loss_evolution,
+        "stats": stats,
+        "config": config_dict
+    }
+
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """Health check endpoint to verify database connectivity"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
         
-        # Test basic query
         cursor.execute("SELECT 1")
         cursor.fetchone()
         
-        # Get database info
         cursor.execute("""
             SELECT 
                 (SELECT COUNT(*) FROM round_metrics) as total_rounds,
@@ -1738,6 +1618,7 @@ def health_check():
         return jsonify({
             "status": "healthy",
             "database": "connected",
+            "session_id": CURRENT_SESSION_ID,
             "stats": {
                 "total_rounds": stats[0],
                 "total_client_submissions": stats[1],
@@ -1745,15 +1626,12 @@ def health_check():
             }
         })
     except Exception as e:
-        return jsonify({
-            "status": "unhealthy",
-            "error": str(e)
-        }), 500
+        return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 
 def create_server(
     global_model: torch.nn.Module,
-    test_loader = None,
+    test_loader=None,
     aggregation_strategy: str = "fedavg",
     num_rounds: int = 10,
     clients_per_round: int = 5,
@@ -1776,35 +1654,23 @@ def create_server(
     
     fl_server.test_loader = test_loader
     
-    # Load saved config from database and update fl_config
-    # We no longer update clients_per_round from numClients because:
-    # - numClients = total number of clients available (from docker-compose)
-    # - clients_per_round = number of clients to select per round (default 5)
-    # These are two separate settings!
     try:
         saved_config = load_fl_config_from_db()
         if saved_config:
-            # Update global fl_config with saved values
             for key, value in saved_config.items():
-                if key not in ['numClients']:  # Don't update these from DB
+                if key not in ['numClients']:
                     fl_config[key] = value
             print("✅ Loaded config from database")
             
-# If user has explicitly set clientsPerRound in config, use it
             if 'clientsPerRound' in saved_config:
                 fl_server.clients_per_round = int(saved_config['clientsPerRound'])
                 print(f"✅ Updated clients_per_round to {fl_server.clients_per_round} from saved config")
             
-            # FIX: Update numRounds from saved config if it exists
-            # This ensures the dashboard displays the correct number of rounds
-            # even before any round is started
             if 'numRounds' in saved_config:
                 old_num_rounds = fl_server.num_rounds
                 fl_server.num_rounds = int(saved_config['numRounds'])
                 print(f"✅ Updated numRounds from {old_num_rounds} to {fl_server.num_rounds} from saved config")
             
-            # CRITICAL FIX: Load and apply the XFL strategy from saved config on startup
-            # This ensures the strategy persists across server restarts
             if 'strategy' in saved_config:
                 strategy = saved_config.get('strategy', 'all_layers')
                 param = saved_config.get('xflParam', 3)
@@ -1819,4 +1685,5 @@ def create_server(
 def run_server(host: str = "localhost", port: int = 5000, debug: bool = False):
     """Run Flask server"""
     print(f"\n🚀 Starting FL Server on {host}:{port}")
+    print(f"   Session ID: {CURRENT_SESSION_ID}")
     app.run(host=host, port=port, debug=debug, threaded=True)

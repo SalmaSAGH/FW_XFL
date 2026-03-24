@@ -13,22 +13,23 @@ class SimpleCNN(nn.Module):
     Simple CNN for MNIST/FashionMNIST
     Architecture: Conv -> Conv -> FC -> FC
     """
-    def __init__(self, num_classes: int = 10):
+    def __init__(self, num_classes: int = 10, in_channels: int = 1, input_size: int = 28):
         super(SimpleCNN, self).__init__()
         
         # Convolutional layers
-        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, padding=1)  # 28x28 -> 28x28
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=3, padding=1)  # 28x28 -> 28x28
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)  # 14x14 -> 14x14
         
         # Pooling layer
         self.pool = nn.MaxPool2d(kernel_size=2, stride=2)  # Reduces size by 2
         
         # Fully connected layers
-        self.fc1 = nn.Linear(64 * 7 * 7, 128)  # After 2 poolings: 28->14->7
+        # Calcul dynamique de la taille après 2 poolings
+        fc_size = (input_size // 4) ** 2 * 64  # // 4 car 2 poolings de stride 2
+        self.fc1 = nn.Linear(fc_size, 128)
         self.fc2 = nn.Linear(128, num_classes)
-        
-        # Dropout for regularization
         self.dropout = nn.Dropout(0.5)
+        self._fc_size = fc_size
         
     def forward(self, x):
         # Conv block 1
@@ -38,7 +39,7 @@ class SimpleCNN(nn.Module):
         x = self.pool(F.relu(self.conv2(x)))  # -> [batch, 64, 7, 7]
         
         # Flatten
-        x = x.view(-1, 64 * 7 * 7)  # -> [batch, 3136]
+        x = x.view(-1, self._fc_size)  # -> [batch, 3136]
         
         # Fully connected layers
         x = F.relu(self.fc1(x))
@@ -307,37 +308,31 @@ class EMNISTCNN(nn.Module):
         self.load_state_dict(current_state, strict=False)
 
 
-def create_model(model_name: str, num_classes: int = 10) -> nn.Module:
-    """
-    Factory function to create models
-    
-    Args:
-        model_name: Name of the model (SimpleCNN, LeNet5, CIFAR100CNN, EMNISTCNN)
-        num_classes: Number of output classes
-        
-    Returns:
-        PyTorch model
-    """
-    models = {
-        "SimpleCNN": SimpleCNN,
-        "LeNet5": LeNet5,
-        "CIFAR100CNN": CIFAR100CNN,
-        "EMNISTCNN": EMNISTCNN
-    }
-    
-    if model_name not in models:
-        raise ValueError(f"Unknown model: {model_name}. Available: {list(models.keys())}")
-    
-    model = models[model_name](num_classes=num_classes)
-    print(f"✅ Model '{model_name}' created with {num_classes} classes")
-    
-    # Print model summary
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"   Total parameters: {total_params:,}")
-    print(f"   Trainable parameters: {trainable_params:,}")
-    
-    return model
+DATASET_CONFIG = {
+    'MNIST':        ('SimpleCNN',   10,  1, 28),
+    'FashionMNIST': ('SimpleCNN',   10,  1, 28),
+    'CIFAR10':      ('SimpleCNN',   10,  3, 32),
+    'CIFAR100':     ('CIFAR100CNN', 100, 3, 32),
+    'EMNIST':       ('EMNISTCNN',   47,  1, 28),
+}
+
+def create_model(model_name: str, num_classes: int = 10, in_channels: int = 1, input_size: int = 28) -> nn.Module:
+    if model_name == 'SimpleCNN':
+        return SimpleCNN(num_classes=num_classes, in_channels=in_channels, input_size=input_size)
+    elif model_name == 'CIFAR100CNN':
+        return CIFAR100CNN(num_classes=num_classes)
+    elif model_name == 'EMNISTCNN':
+        return EMNISTCNN(num_classes=num_classes)
+    elif model_name == 'LeNet5':
+        return LeNet5(num_classes=num_classes)
+    else:
+        raise ValueError(f"Unknown model: {model_name}")
+
+def create_model_for_dataset(dataset_name: str) -> nn.Module:
+    """Crée le bon modèle pour un dataset donné"""
+    config = DATASET_CONFIG.get(dataset_name, ('SimpleCNN', 10, 1, 28))
+    model_name, num_classes, in_channels, input_size = config
+    return create_model(model_name, num_classes=num_classes, in_channels=in_channels, input_size=input_size)
 
 
 # Test function
