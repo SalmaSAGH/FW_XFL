@@ -195,18 +195,32 @@ class XFL(FedAvg):
         print(f"📊 Aggregating {len(client_weights)} clients with XFL-{self.xfl_variant}")
         print(f"   Layers received: {len(layer_updates)}")
 
-        # Aggregate each layer
+        # Aggregate each layer - FIXED: force torch.float32 dtype
         aggregated_weights = OrderedDict()
+        
+        # Validate input dtypes
+        for layer_name, updates in layer_updates.items():
+            for i, (layer_weight, _) in enumerate(updates):
+                if not layer_weight.dtype == torch.float32:
+                    print(f"⚠️  Converting layer '{layer_name}' (client {i}) "
+                          f"from {layer_weight.dtype} → float32")
+                    updates[i] = (layer_weight.float(), updates[i][1])
+        
         for layer_name, updates in layer_updates.items():
             total_samples = sum(num_samples for _, num_samples in updates)
-            aggregated_layer = torch.zeros_like(updates[0][0])
+            # FIXED: Force float32 dtype regardless of input
+            first_weight_dtype = updates[0][0].dtype
+            aggregated_layer = torch.zeros_like(
+                updates[0][0], dtype=torch.float32
+            )
 
             for layer_weight, num_samples in updates:
                 weight_factor = num_samples / total_samples
-                aggregated_layer += layer_weight * weight_factor
+                aggregated_layer += layer_weight.float() * weight_factor
 
-            aggregated_weights[layer_name] = aggregated_layer
+            aggregated_weights[layer_name] = aggregated_layer.float()
 
+        print(f"✅ XFL aggregation complete: {len(aggregated_weights)} layers, all float32")
         return aggregated_weights
 
     def get_xfl_info(self) -> Dict:

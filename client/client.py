@@ -10,18 +10,19 @@ from collections import OrderedDict
 import time
 from typing import Dict, Any, Tuple
 import torch
+import torch.optim as optim
 
 from .trainer import LocalTrainer
 from .metrics import MetricsCollector
 from .model import create_model, DATASET_CONFIG
-from .dataset import create_dataloaders
+from .dataset import create_single_client_loader
 
 import gc
 
 
 class FLClient:
     """Federated Learning Client - Speed Optimized"""
-    
+
     def __init__(
         self,
         client_id: int,
@@ -72,14 +73,12 @@ class FLClient:
         )
 
         self.metrics_collector = MetricsCollector(client_id=client_id)
-        # Démarrer la collecte de métriques dès l'initialisation
         self.metrics_collector.start_collection()
 
         print(f"✅ FLClient {client_id} initialized | dataset={dataset_name} | "
               f"model={self.current_model_name} | {len(train_loader.dataset)} samples")
 
     def _cleanup_memory(self):
-        """Clean up memory after training to prevent OOM"""
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
@@ -87,19 +86,17 @@ class FLClient:
             delattr(self, '_quantization_meta')
 
     def _weights_to_base64(self, weights: OrderedDict) -> str:
-        weights_bytes = pickle.dumps(weights)
-        return base64.b64encode(weights_bytes).decode('utf-8')
+        return base64.b64encode(pickle.dumps(weights)).decode('utf-8')
 
     def _base64_to_weights(self, base64_str: str) -> OrderedDict:
-        weights_bytes = base64.b64decode(base64_str.encode('utf-8'))
-        return pickle.loads(weights_bytes)
+        return pickle.loads(base64.b64decode(base64_str.encode('utf-8')))
 
     def _get_model_for_dataset(self, dataset_name: str):
-        """Retourne (model_name, num_classes, in_channels, input_size)"""
         return DATASET_CONFIG.get(dataset_name, ('SimpleCNN', 10, 1, 28))
 
-    def reload_data_if_needed(self, dataset_name: str, distribution: str = None, verbose: bool = False) -> bool:
-        """Reload model and data if dataset or distribution changed."""
+    def reload_data_if_needed(self, dataset_name: str,
+                               distribution: str = None,
+                               verbose: bool = False) -> bool:
         needs_reload = (
             dataset_name != self.current_dataset_name or
             (distribution is not None and distribution != self.current_distribution)
@@ -109,27 +106,25 @@ class FLClient:
             return False
 
         if dataset_name != self.current_dataset_name:
-            model_name, num_classes, in_channels, input_size = self._get_model_for_dataset(dataset_name)
+            model_name, num_classes, in_channels, input_size = \
+                self._get_model_for_dataset(dataset_name)
 
-            print(f"Client {self.client_id}: 🔄 Dataset change detected: "
-                  f"{self.current_dataset_name} → {dataset_name}")
-            print(f"Client {self.client_id}: 🔄 New model: {model_name} | "
-                  f"in_channels={in_channels} | input_size={input_size} | num_classes={num_classes}")
+            print(f"Client {self.client_id}: 🔄 Dataset change: "
+                  f"{self.current_dataset_name} → {dataset_name} | "
+                  f"model={model_name} | in_channels={in_channels} | "
+                  f"input_size={input_size} | num_classes={num_classes}")
 
-            self.model = create_model(
-                model_name,
-                num_classes=num_classes,
-                in_channels=in_channels,
-                input_size=input_size
-            )
+            self.model = create_model(model_name, num_classes=num_classes,
+                                       in_channels=in_channels, input_size=input_size)
 
-            self.trainer = LocalTrainer(
-                model=self.model,
-                optimizer_name="sgd",
-                learning_rate=0.01,
+            self.trainer.model = self.model
+            self.trainer.optimizer = optim.SGD(
+                self.model.parameters(),
+                lr=0.01,
                 momentum=0.9,
                 weight_decay=0.0001
             )
+
 
             self.current_dataset_name = dataset_name
             self.current_model_name = model_name
@@ -138,19 +133,18 @@ class FLClient:
             self.distribution = distribution
             self.current_distribution = distribution
 
-        print(f"Client {self.client_id}: 📦 Loading data for {self.current_dataset_name} "
-              f"(distribution={self.distribution})...")
+        print(f"Client {self.client_id}: 📦 Loading data for "
+              f"{self.current_dataset_name} ({self.distribution})...")
 
-        client_loaders, _ = create_dataloaders(
+        self.train_loader = create_single_client_loader(
             dataset_name=self.current_dataset_name,
+            client_id=self.client_id,
             num_clients=self.num_clients,
             batch_size=self.batch_size,
             distribution=self.distribution,
             data_dir=self.data_dir,
             seed=42
         )
-
-        self.train_loader = client_loaders[self.client_id]
 
         print(f"Client {self.client_id}: ✅ Data reloaded "
               f"({len(self.train_loader.dataset)} samples)")
@@ -159,18 +153,14 @@ class FLClient:
         return True
 
     def participate_in_round(self, verbose: bool = False) -> bool:
-        """
-        Participate in one FL round.
-        verbose=True affiche TOUTES les erreurs pour faciliter le debug.
-        """
         try:
-            # ── Step 1: Get global model ──────────────────────────────────────
+            # Step 1: Get global model
             response = requests.get(
-                f"{self.server_url}/api/get_global_model",
-                timeout=10
+                f"{self.server_url}/api/get_global_model", timeout=10
             )
             if response.status_code != 200:
-                print(f"Client {self.client_id}: ❌ get_global_model returned {response.status_code}")
+                print(f"Client {self.client_id}: ❌ get_global_model "
+                      f"returned {response.status_code}")
                 return False
 
             data = response.json()
@@ -178,38 +168,37 @@ class FLClient:
             current_round = data['round']
             xfl_strategy = data.get('xfl_strategy', 'all_layers')
             xfl_param = data.get('xfl_param', 3)
-
             server_dataset = data.get('dataset_name', 'MNIST')
             server_distribution = data.get('data_distribution', 'iid')
 
-            # ── Step 2: Reload model/data if dataset changed ──────────────────
-            # DOIT être fait avant set_model_weights
+            # Step 2: Reload model/data if dataset changed
             self.reload_data_if_needed(server_dataset, server_distribution, verbose)
 
             if verbose:
                 print(f"Client {self.client_id}: Round {current_round} | "
                       f"dataset={server_dataset} | strategy={xfl_strategy}")
 
-            # ── Step 3: Validate that server weights match local model ────────
+# Step 3: Handle XFL partial updates (server sends subset of layers)
             local_keys = set(self.trainer.model.state_dict().keys())
             server_keys = set(weights.keys())
+            
+            # Log XFL partial updates
+            if verbose or len(server_keys) < len(local_keys):
+                num_server_layers = len(set(k.split('.')[0] for k in server_keys))
+                num_local_layers = len(local_keys)
+                print(f"Client {self.client_id}: ℹ️ XFL partial update — "
+                      f"server sent {len(server_keys)}/{num_local_layers} params "
+                      f"({num_server_layers} layers)")
 
-            if local_keys != server_keys:
-                print(f"Client {self.client_id}: ❌ Weight key mismatch AFTER reload!")
-                print(f"  Local model keys  : {sorted(local_keys)}")
-                print(f"  Server weight keys: {sorted(server_keys)}")
-                print(f"  Missing in local  : {server_keys - local_keys}")
-                print(f"  Extra in local    : {local_keys - server_keys}")
-                return False
 
-            # ── Step 4: Load server weights into local model ──────────────────
+            # Step 4: Load server weights
             try:
                 self.trainer.set_model_weights(weights)
             except Exception as e:
                 print(f"Client {self.client_id}: ❌ set_model_weights failed: {e}")
                 return False
 
-            # ── Step 5: Train locally ─────────────────────────────────────────
+            # Step 5: Train locally
             start_train = time.time()
             training_metrics = self.trainer.train(
                 train_loader=self.train_loader,
@@ -220,9 +209,10 @@ class FLClient:
 
             if verbose:
                 print(f"Client {self.client_id}: Training done in {train_time:.1f}s | "
-                      f"Loss={training_metrics['loss']:.4f} | Acc={training_metrics['accuracy']:.1f}%")
+                      f"Loss={training_metrics['loss']:.4f} | "
+                      f"Acc={training_metrics['accuracy']:.1f}%")
 
-            # ── Step 6: Get trained weights and apply XFL strategy ────────────
+            # Step 6: Apply XFL strategy
             trained_weights = self.trainer.get_model_weights()
             num_samples = len(self.train_loader.dataset)
 
@@ -230,7 +220,7 @@ class FLClient:
                 trained_weights, xfl_strategy, xfl_param, current_round, verbose
             )
 
-            # ── Step 7: Collect metrics ───────────────────────────────────────
+            # Step 7: Collect metrics
             model_size_bytes = sum(
                 p.numel() * p.element_size()
                 for p in weights_to_send.values()
@@ -255,12 +245,10 @@ class FLClient:
                 }
             )
 
-            # ── Step 8: Send update to server ─────────────────────────────────
-            weights_b64 = self._weights_to_base64(weights_to_send)
-
+            # Step 8: Send update to server
             payload = {
                 "client_id": self.client_id,
-                "weights": weights_b64,
+                "weights": self._weights_to_base64(weights_to_send),
                 "num_samples": num_samples,
                 "metrics": full_metrics
             }
@@ -276,8 +264,8 @@ class FLClient:
             )
 
             if response.status_code != 200:
-                print(f"Client {self.client_id}: ❌ submit_update returned {response.status_code}: "
-                      f"{response.text[:200]}")
+                print(f"Client {self.client_id}: ❌ submit_update returned "
+                      f"{response.status_code}: {response.text[:200]}")
                 return False
 
             result = response.json()
@@ -294,24 +282,22 @@ class FLClient:
             self._cleanup_memory()
             return False
         except Exception as e:
-            # Toujours afficher l'exception complète pour faciliter le debug
             import traceback
-            print(f"Client {self.client_id}: ❌ Unexpected error in participate_in_round:")
+            print(f"Client {self.client_id}: ❌ Unexpected error in "
+                  f"participate_in_round:")
             print(traceback.format_exc())
             self._cleanup_memory()
             return False
 
     def _apply_sparsification(self, weights: OrderedDict, threshold: float) -> OrderedDict:
-        sparsified = OrderedDict()
-        for name, param in weights.items():
-            sparsified[name] = torch.where(
-                torch.abs(param) < threshold,
-                torch.zeros_like(param),
-                param
-            )
-        return sparsified
+        return OrderedDict(
+            (name, torch.where(torch.abs(param) < threshold,
+                               torch.zeros_like(param), param))
+            for name, param in weights.items()
+        )
 
-    def _apply_quantization(self, weights: OrderedDict, bits: int) -> Tuple[OrderedDict, Dict[str, Dict]]:
+    def _apply_quantization(self, weights: OrderedDict,
+                             bits: int) -> Tuple[OrderedDict, Dict[str, Dict]]:
         quantized = OrderedDict()
         quantization_meta = {}
 
@@ -322,42 +308,28 @@ class FLClient:
             if max_val == min_val:
                 quantized[name] = param
                 quantization_meta[name] = {
-                    'quantized': False,
-                    'min_val': min_val,
-                    'max_val': max_val,
-                    'scale': 1.0,
-                    'zero_point': 0
+                    'quantized': False, 'min_val': min_val, 'max_val': max_val,
+                    'scale': 1.0, 'zero_point': 0
                 }
                 continue
 
             abs_max = max(abs(min_val), abs(max_val))
             scale = (2 * abs_max) / (2**bits - 1)
-            zero_point = 0
 
             quantized_int = torch.round(param / scale).clamp(
                 -(2**(bits-1)), 2**(bits-1) - 1
             ).to(torch.int32)
             quantized[name] = quantized_int
-
             quantization_meta[name] = {
-                'quantized': True,
-                'min_val': min_val,
-                'max_val': max_val,
-                'scale': scale,
-                'zero_point': zero_point,
-                'bits': bits
+                'quantized': True, 'min_val': min_val, 'max_val': max_val,
+                'scale': scale, 'zero_point': 0, 'bits': bits
             }
 
         return quantized, quantization_meta
 
-    def _apply_xfl_strategy(
-        self,
-        trained_weights: OrderedDict,
-        xfl_strategy: str,
-        xfl_param: int,
-        current_round: int,
-        verbose: bool = False
-    ) -> OrderedDict:
+    def _apply_xfl_strategy(self, trained_weights: OrderedDict, xfl_strategy: str,
+                              xfl_param: int, current_round: int,
+                              verbose: bool = False) -> OrderedDict:
         all_layer_names = list(trained_weights.keys())
 
         if xfl_strategy == "all_layers":
@@ -372,10 +344,11 @@ class FLClient:
             layer_index = (self.client_id + current_round - 1) % num_layers
             selected_prefix = layer_prefixes[layer_index]
 
-            selected_weights = OrderedDict()
-            for param_name in all_layer_names:
-                if param_name.startswith(selected_prefix + '.'):
-                    selected_weights[param_name] = trained_weights[param_name]
+            selected_weights = OrderedDict(
+                (param_name, trained_weights[param_name])
+                for param_name in all_layer_names
+                if param_name.startswith(selected_prefix + '.')
+            )
 
             if verbose:
                 print(f"   📌 XFL: layer {layer_index} ({selected_prefix}) — "

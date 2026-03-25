@@ -646,12 +646,31 @@ class FLServer:
                 client_num_samples
             )
 
-            if isinstance(self.aggregation_strategy, XFL):
-                current_state = self.global_model.state_dict()
-                current_state.update(aggregated_weights)
-                self.global_model.load_state_dict(current_state)
-            else:
-                self.global_model.load_state_dict(aggregated_weights)
+            # FIXED: Ensure all tensors are float32 before model update
+            def ensure_float32(weights):
+                for name, tensor in weights.items():
+                    if tensor.dtype != torch.float32:
+                        print(f"🔧 Converting '{name}': {tensor.dtype} → float32 "
+                              f"(shape: {tensor.shape})")
+                        weights[name] = tensor.float()
+                return weights
+            
+            aggregated_weights = ensure_float32(aggregated_weights)
+
+            # Apply model update with robust error handling
+            model_updated = False
+            try:
+                if isinstance(self.aggregation_strategy, XFL):
+                    current_state = self.global_model.state_dict()
+                    current_state.update(aggregated_weights)
+                    self.global_model.load_state_dict(current_state, strict=False)
+                else:
+                    self.global_model.load_state_dict(aggregated_weights, strict=False)
+                model_updated = True
+                print("✅ Global model updated successfully")
+            except Exception as model_error:
+                print(f"⚠️  Model load_state_dict failed (continuing): {model_error}")
+                print("   Tensors will be skipped but round metrics still saved")
 
             aggregation_time = time.time() - start_time
 

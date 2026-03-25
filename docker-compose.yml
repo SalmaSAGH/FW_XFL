@@ -99,7 +99,7 @@ services:
   client-0:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-0
-    command: python -m client.run_client_standalone --client-id 0 --server-host server --num-clients 10 --batch-size 1024
+    command: python -m client.run_client_standalone --client-id 0 --server-host server --num-clients 10 --batch-size 64
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client
@@ -113,12 +113,12 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1024M
+          memory: 4096M
 
   client-1:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-1
-    command: python -m client.run_client_standalone --client-id 1 --server-host server --num-clients 10 --batch-size 1024
+    command: python -m client.run_client_standalone --client-id 1 --server-host server --num-clients 10 --batch-size 64
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client
@@ -132,12 +132,12 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1024M
+          memory: 4096M
 
   client-2:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-2
-    command: python -m client.run_client_standalone --client-id 2 --server-host server --num-clients 10 --batch-size 1024
+    command: python -m client.run_client_standalone --client-id 2 --server-host server --num-clients 10 --batch-size 64
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client
@@ -151,12 +151,12 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1024M
+          memory: 4096M
 
   client-3:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-3
-    command: python -m client.run_client_standalone --client-id 3 --server-host server --num-clients 10 --batch-size 1024
+    command: python -m client.run_client_standalone --client-id 3 --server-host server --num-clients 10 --batch-size 64
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client
@@ -170,12 +170,12 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1024M
+          memory: 4096M
 
   client-4:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-4
-    command: python -m client.run_client_standalone --client-id 4 --server-host server --num-clients 10 --batch-size 1024
+    command: python -m client.run_client_standalone --client-id 4 --server-host server --num-clients 10 --batch-size 64
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client
@@ -189,12 +189,12 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1024M
+          memory: 4096M
 
   client-5:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-5
-    command: python -m client.run_client_standalone --client-id 5 --server-host server --num-clients 10 --batch-size 1024
+    command: python -m client.run_client_standalone --client-id 5 --server-host server --num-clients 10 --batch-size 64
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client
@@ -208,12 +208,12 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1024M
+          memory: 4096M
 
   client-6:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-6
-    command: python -m client.run_client_standalone --client-id 6 --server-host server --num-clients 10 --batch-size 1024
+    command: python -m client.run_client_standalone --client-id 6 --server-host server --num-clients 10 --batch-size 64
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client
@@ -227,12 +227,12 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1024M
+          memory: 4096M
 
   client-7:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-7
-    command: python -m client.run_client_standalone --client-id 7 --server-host server --num-clients 10 --batch-size 1024
+    command: python -m client.run_client_standalone --client-id 7 --server-host server --num-clients 10 --batch-size 64
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client
@@ -246,12 +246,12 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1024M
+          memory: 4096M
 
   client-8:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-8
-    command: python -m client.run_client_standalone --client-id 8 --server-host server --num-clients 10 --batch-size 1024
+    command: python -m client.run_client_standalone --client-id 8 --server-host server --num-clients 10 --batch-size 64
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client
@@ -265,12 +265,12 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1024M
+          memory: 4096M
 
   client-9:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-9
-    command: python -m client.run_client_standalone --client-id 9 --server-host server --num-clients 10 --batch-size 1024
+    command: python -m client.run_client_standalone --client-id 9 --server-host server --num-clients 10 --batch-size 64
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client
@@ -284,7 +284,7 @@ services:
       resources:
         limits:
           cpus: '2.0'
-          memory: 1024M
+          memory: 4096M
 
 networks:
   fl-network:
