@@ -14,13 +14,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from client import FLClient, create_model, create_dataloaders
 from client.model import DATASET_CONFIG
-
+from client.dataset import create_single_client_loader
 
 def wait_for_server(server_url: str):
     """Wait for server to be ready"""
     for i in range(30):
         try:
-            if requests.get(f"{server_url}/api/status", timeout=2).status_code == 200:
+            if requests.get(f"{server_url}/api/status", timeout=5).status_code == 200:
                 return True
         except:
             pass
@@ -67,15 +67,15 @@ def main():
     print(f"Client {args.client_id}: Loading data ({args.dataset}, {args.distribution})...")
     start_load = time.time()
 
-    client_loaders, _ = create_dataloaders(
+    train_loader = create_single_client_loader(
         dataset_name=args.dataset,
+        client_id=args.client_id,
         num_clients=args.num_clients,
         batch_size=args.batch_size,
         distribution=args.distribution,
         data_dir="/app/data",
         seed=42
-    )
-    train_loader = client_loaders[args.client_id]
+        )
 
     print(f"Client {args.client_id}: Data loaded in {time.time() - start_load:.1f}s "
           f"({len(train_loader.dataset)} samples)")
@@ -102,13 +102,13 @@ def main():
     check_count = 0
     consecutive_failures = 0
     max_retries = 5
-    base_delay = 0.5
+    base_delay = 1.0
 
     while True:
         try:
             check_count += 1
 
-            resp = requests.get(f"{server_url}/api/status", timeout=2)
+            resp = requests.get(f"{server_url}/api/status", timeout=5)
             status = resp.json()
             current_round = status.get('current_round', 0)
 
@@ -153,7 +153,7 @@ def main():
             if consecutive_failures > 3:
                 time.sleep(2.0)
             else:
-                time.sleep(0.2)
+                time.sleep(1.0)
 
         except KeyboardInterrupt:
             print(f"Client {args.client_id} stopped by user")

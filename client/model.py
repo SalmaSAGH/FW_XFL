@@ -45,10 +45,25 @@ class SimpleCNN(nn.Module):
 
     def set_layer_weights(self, weights):
         current_state = self.state_dict()
+        mismatches = []
         for name, param in weights.items():
             if name in current_state:
-                current_state[name] = param
+                if param.shape != current_state[name].shape:
+                    mismatches.append(f"{name}: expected {current_state[name].shape} got {param.shape}")
+                else:
+                    current_state[name] = param
+            else:
+                mismatches.append(f"{name} ({param.shape}): missing in model")
+        
+        if mismatches:
+            print(f"⚠️  Model set_layer_weights: {len(mismatches)} mismatches:")
+            for m in mismatches[:3]:  # First 3 only
+                print(f"   {m}")
+            if len(mismatches) > 3:
+                print(f"   ... +{len(mismatches)-3} more")
+        
         self.load_state_dict(current_state, strict=False)
+
 
 
 class LeNet5(nn.Module):
@@ -80,10 +95,25 @@ class LeNet5(nn.Module):
 
     def set_layer_weights(self, weights):
         current_state = self.state_dict()
+        mismatches = []
         for name, param in weights.items():
             if name in current_state:
-                current_state[name] = param
+                if param.shape != current_state[name].shape:
+                    mismatches.append(f"{name}: expected {current_state[name].shape} got {param.shape}")
+                else:
+                    current_state[name] = param
+            else:
+                mismatches.append(f"{name} ({param.shape}): missing")
+        
+        if mismatches:
+            print(f"⚠️  Model set_layer_weights: {len(mismatches)} mismatches:")
+            for m in mismatches[:3]:
+                print(f"   {m}")
+            if len(mismatches) > 3:
+                print(f"   ... +{len(mismatches)-3} more")
+        
         self.load_state_dict(current_state, strict=False)
+
 
 
 class CIFAR100CNN(nn.Module):

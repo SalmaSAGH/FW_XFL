@@ -1,0 +1,35 @@
+# Optimized CIFAR-100 Configuration
+# Fixes: slow rounds (195s→~60s), low acc (2%→15%+)
+experiment:
+  name: "cifar100_optimized"
+  description: "CIFAR100 with tuned hyperparameters"
+
+federated_learning:
+  num_clients: 10
+  clients_per_round: 5
+local_epochs: 5              # ↑2 → Better accuracy for CIFAR-100
+
+dataset:
+  name: "CIFAR100"
+  data_distribution: "iid"
+  batch_size: 64               # Optimal speed/accuracy
+
+model:
+  name: "CIFAR100CNN"
+  num_classes: 100
+
+training:
+  optimizer: "sgd"             # Best for vision
+  learning_rate: 0.01          # Optimal for CIFAR SGD
+  momentum: 0.9
+  weight_decay: 0.0005
+
+strategy:
+  type: "all_layers"           # Full model for debugging
+
+server:
+  port: 5000
+
+paths:
+  data_dir: "./data"
+

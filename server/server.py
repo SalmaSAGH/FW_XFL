@@ -5,6 +5,7 @@ Flask server for Federated Learning with XFL support
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import torch
+from torch.utils.data import DataLoader
 import pickle
 import base64
 import hashlib
@@ -24,6 +25,8 @@ import sys
 
 from .strategy import create_aggregation_strategy, XFL, FedAvg
 from .metrics import ServerMetricsCollector
+from client.model import create_model, DATASET_CONFIG  # ← DYNAMIC MODEL SUPPORT
+from client.dataset import load_dataset  # ← TEST DATA LOADER
 import gc
 
 # Database URL for dashboard APIs
@@ -77,7 +80,8 @@ def _init_connection_pool():
             
             _connection_pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=2,
-                maxconn=10,
+                maxconn=5,
+                connect_timeout=5,
                 host=host,
                 port=port,
                 user=user,
@@ -433,6 +437,7 @@ class FLServer:
         xfl_param: int = 3
     ):
         self.global_model = global_model
+        self.current_dataset_name = "MNIST"  # ← TRACK CURRENT DATASET
         self.aggregation_strategy = create_aggregation_strategy(
             aggregation_strategy,
             xfl_strategy=xfl_strategy,
@@ -699,8 +704,7 @@ class FLServer:
                     )
 
             print(f"✅ Round {self.current_round} completed in {aggregation_time:.2f}s")
-            if test_accuracy is not None:
-                print(f"   Global Test Accuracy: {test_accuracy:.2f}%")
+            print(f"   🌍 Global Test → Loss: {test_loss:.4f} | Acc: {test_accuracy:.2f}%" if test_accuracy is not None else "   🌍 Global Test → SKIPPED")
 
         except Exception as e:
             aggregation_time = time.time() - start_time
@@ -767,7 +771,43 @@ class FLServer:
 
     def get_global_model(self) -> OrderedDict:
         with self.lock:
-            return self.global_model.state_dict()
+            weights = self.global_model.state_dict()
+            # 🔍 DEBUG: Log top layer shapes for CIFAR100 troubleshooting
+            debug_layers = ['conv1.weight', 'conv2.weight', 'fc1.weight']
+            for layer in debug_layers:
+                if layer in weights:
+                    print(f"SERVER DEBUG: {layer} shape={weights[layer].shape}")
+                else:
+                    print(f"SERVER DEBUG: {layer} MISSING")
+            print(f"SERVER DEBUG: Total params sent={len(weights)}")
+            return weights
+    
+    def recreate_global_model(self, dataset_name: str):
+        """🔧 Recreate global model when dataset changes (EMNIST fix)"""
+        try:
+            cfg = DATASET_CONFIG.get(dataset_name, ('SimpleCNN', 10, 1, 28))
+            model_name, num_classes, in_channels, input_size = cfg
+            
+            old_params = sum(p.numel() for p in self.global_model.parameters())
+            print(f"🔄 Recreating model: {self.current_dataset_name} ({old_params:,} params)")
+            print(f"   → {dataset_name}: {model_name}, {num_classes}cls, {in_channels}ch")
+            
+            self.global_model = create_model(model_name, num_classes, in_channels, input_size)
+            
+            new_params = sum(p.numel() for p in self.global_model.parameters())
+            print(f"✅ New model created: {new_params:,} params | Dataset: {dataset_name}")
+            
+            self.current_dataset_name = dataset_name
+            
+            # Recreate test_loader
+            self.test_loader = DataLoader(
+                load_dataset(dataset_name, data_dir="./data", train=False),
+                batch_size=256, shuffle=False, num_workers=0
+            )
+            print(f"✅ Test loader updated for {dataset_name}")
+            
+        except Exception as e:
+            print(f"❌ Model recreation failed: {e}")
     
     def get_server_status(self) -> Dict[str, Any]:
         with self.lock:
@@ -805,6 +845,7 @@ class FLServer:
                 "clients_expected": self.clients_per_round,
                 "total_clients": total_clients,
                 "latest_accuracy": latest_accuracy,
+                "current_dataset": self.current_dataset_name,  # ← NEW
                 "submitted_clients": [sub["client_id"] for sub in self.client_submissions],
                 "selected_clients": self.selected_clients if self.round_in_progress else [],
                 "xfl_strategy": xfl_info['strategy'],
@@ -848,6 +889,7 @@ fl_config = {
     "clientsPerRound": 5,
     "dataset": "MNIST",
     "dataDistribution": "iid",
+
     "strategy": "all_layers",
     "xflParam": 3,
     "localEpochs": 2,
@@ -914,6 +956,13 @@ def save_config():
         fl_server.num_rounds = int(data['numRounds'])
         fl_config['numRounds'] = int(data['numRounds'])
         print(f"✅ Updated numRounds from {old_num_rounds} to {fl_server.num_rounds}")
+    
+    # ← FIXED EMNIST: Recreate global_model when dataset changes
+    if 'dataset' in data:
+        new_dataset = data['dataset']
+        if fl_server and new_dataset != fl_server.current_dataset_name:
+            print(f"🔄 Server: Dataset changed {fl_server.current_dataset_name} → {new_dataset}")
+            fl_server.recreate_global_model(new_dataset)
     
     return jsonify({"status": "success", "message": "Configuration saved", "config": fl_config})
 

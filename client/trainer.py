@@ -27,6 +27,10 @@ class LocalTrainer:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         
+        self.optimizer_name = optimizer_name
+        self.learning_rate = learning_rate
+        self.momentum = momentum
+        self.weight_decay = weight_decay
         # Create optimizer
         if optimizer_name.lower() == "sgd":
             self.optimizer = optim.SGD(

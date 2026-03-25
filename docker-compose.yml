@@ -99,7 +99,7 @@ services:
   client-0:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-0
-    command: python -m client.run_client_standalone --client-id 0 --server-host server --num-clients 10 --batch-size 64
+    command: python -m client.run_client_standalone --client-id 0 --server-host server --num-clients 10 --dataset CIFAR100 --batch-size 64 --local-epochs 5
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client
@@ -118,7 +118,7 @@ services:
   client-1:
     image: xfl-rpilab-client:latest
     container_name: xfl-client-1
-    command: python -m client.run_client_standalone --client-id 1 --server-host server --num-clients 10 --batch-size 64
+    command: python -m client.run_client_standalone --client-id 1 --server-host server --num-clients 10 --dataset CIFAR100 --batch-size 64 --local-epochs 5
     volumes:
       - ./data:/app/data:ro
       - ./client:/app/client

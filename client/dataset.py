@@ -122,8 +122,7 @@ def load_dataset(
     elif dataset_name == "CIFAR100":
         if train:
             transform = transforms.Compose([
-                transforms.RandomCrop(32, padding=4),
-                transforms.RandomHorizontalFlip(),
+                transforms.RandomCrop(32, padding=2),  # Reduced for speed
                 transforms.ToTensor(),
                 transforms.Normalize((0.5071, 0.4867, 0.4408),
                                      (0.2675, 0.2565, 0.2761))
@@ -184,8 +183,8 @@ def create_single_client_loader(
         client_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=0,
-        pin_memory=False
+        num_workers=2,
+        pin_memory=True
     )
 
 

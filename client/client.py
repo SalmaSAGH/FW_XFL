@@ -102,6 +102,9 @@ class FLClient:
             (distribution is not None and distribution != self.current_distribution)
         )
 
+        print(f"DEBUG reload_data_if_needed: needs_reload={needs_reload} | "
+          f"current={self.current_dataset_name} vs server={dataset_name}")
+        
         if not needs_reload:
             return False
 
@@ -118,12 +121,19 @@ class FLClient:
                                        in_channels=in_channels, input_size=input_size)
 
             self.trainer.model = self.model
-            self.trainer.optimizer = optim.SGD(
-                self.model.parameters(),
-                lr=0.01,
-                momentum=0.9,
-                weight_decay=0.0001
-            )
+            if self.trainer.optimizer_name.lower() == "sgd":
+                self.trainer.optimizer = optim.SGD(
+                    self.model.parameters(),
+                    lr=self.trainer.learning_rate,
+                    momentum=self.trainer.momentum,
+                    weight_decay=self.trainer.weight_decay
+                    )
+            elif self.trainer.optimizer_name.lower() == "adam":
+                self.trainer.optimizer = optim.Adam(
+                    self.model.parameters(),
+                    lr=self.trainer.learning_rate,
+                    weight_decay=self.trainer.weight_decay
+                    )
 
 
             self.current_dataset_name = dataset_name
@@ -171,8 +181,27 @@ class FLClient:
             server_dataset = data.get('dataset_name', 'MNIST')
             server_distribution = data.get('data_distribution', 'iid')
 
+            # NEW: Shape mismatch debug logging (Step 3.5)
+            local_state = self.trainer.model.state_dict()
+            debug_layers = ['conv1.weight', 'conv2.weight', 'fc1.weight']
+            for layer in debug_layers:
+                if layer in weights:
+                    server_shape = weights[layer].shape
+                    if layer in local_state:
+                        local_shape = local_state[layer].shape
+                        if server_shape != local_shape:
+                            print(f"Client {self.client_id}: ⚠️  {layer} "
+                                  f"expected {local_shape} got {server_shape}")
+                    else:
+                        print(f"Client {self.client_id}: ⚠️  {layer} "
+                              f"({server_shape}) missing in local model")
+                elif layer in local_state:
+                    print(f"Client {self.client_id}: ⚠️  {layer} "
+                          f"({local_state[layer].shape}) missing from server")
+
             # Step 2: Reload model/data if dataset changed
             self.reload_data_if_needed(server_dataset, server_distribution, verbose)
+
 
             if verbose:
                 print(f"Client {self.client_id}: Round {current_round} | "
@@ -331,6 +360,30 @@ class FLClient:
                               xfl_param: int, current_round: int,
                               verbose: bool = False) -> OrderedDict:
         all_layer_names = list(trained_weights.keys())
+        
+        # FIXED: xfl_sparsification sends FIRST 2 conv blocks only (8 params: conv1/2 + bias)
+        if xfl_strategy == "xfl_sparsification":
+            # Target layers: conv1.weight, conv1.bias, conv2.weight, conv2.bias (4 params ×2 = 8)
+            target_layers = ['conv1.weight', 'conv1.bias', 'conv2.weight', 'conv2.bias']
+            selected_weights = OrderedDict(
+                (name, trained_weights[name]) for name in target_layers if name in trained_weights
+            )
+            
+            # NEW: Log sent shapes
+            print(f"Client {self.client_id}: 📤 Sending XFL conv1/2:")
+            for name in ['conv1.weight', 'conv1.bias', 'conv2.weight', 'conv2.bias']:
+                if name in selected_weights:
+                    print(f"  {name}: {selected_weights[name].shape}")
+            
+            # Apply sparsification
+            selected_weights = self._apply_sparsification(
+                selected_weights, self.sparsification_threshold
+            )
+            
+            if verbose:
+                print(f"   📌 XFL-Sparsification: conv1/conv2 only ({len(selected_weights)}/8 params)")
+            return selected_weights
+
 
         if xfl_strategy == "all_layers":
             return trained_weights
@@ -339,6 +392,7 @@ class FLClient:
             return trained_weights
 
         elif xfl_strategy.startswith("xfl"):
+            # Generic cyclic XFL (other variants)
             layer_prefixes = sorted(set(name.split('.')[0] for name in all_layer_names))
             num_layers = len(layer_prefixes)
             layer_index = (self.client_id + current_round - 1) % num_layers
@@ -347,18 +401,18 @@ class FLClient:
             selected_weights = OrderedDict(
                 (param_name, trained_weights[param_name])
                 for param_name in all_layer_names
-                if param_name.startswith(selected_prefix + '.')
+                if param_name.startswith(selected_prefix)
             )
 
             if verbose:
-                print(f"   📌 XFL: layer {layer_index} ({selected_prefix}) — "
+                print(f"   📌 XFL-{xfl_strategy}: layer {layer_index} ({selected_prefix}) — "
                       f"{len(selected_weights)} params")
 
-            if xfl_strategy == "xfl_sparsification":
+            if "sparsification" in xfl_strategy:
                 selected_weights = self._apply_sparsification(
                     selected_weights, self.sparsification_threshold
                 )
-            elif xfl_strategy == "xfl_quantization":
+            elif "quantization" in xfl_strategy:
                 selected_weights, quantization_meta = self._apply_quantization(
                     selected_weights, self.quantization_bits
                 )
@@ -370,3 +424,4 @@ class FLClient:
             if verbose:
                 print(f"   ⚠️ Unknown XFL strategy: {xfl_strategy}, sending all layers")
             return trained_weights
+

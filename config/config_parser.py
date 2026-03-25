@@ -35,7 +35,7 @@ class FederatedLearningConfig(BaseModel):
 
 class DatasetConfig(BaseModel):
     """Dataset configuration"""
-    name: Literal["MNIST", "CIFAR10", "FashionMNIST"]
+    name: Literal["MNIST", "CIFAR10", "FashionMNIST", "CIFAR100"]
     data_distribution: Literal["iid", "non_iid"] = "iid"
     train_test_split: float = Field(gt=0, lt=1)
     batch_size: int = Field(gt=0)

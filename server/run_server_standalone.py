@@ -13,12 +13,32 @@ from server import create_server
 from client import create_model, create_dataloaders
 from client.model import DATASET_CONFIG  # ← source unique de vérité pour dataset→model
 
+# NEW: Config parsing for dynamic dataset init
+try:
+    from config.config_parser import load_config
+    config_cifar100 = load_config("config/config_cifar100.yaml")
+    initial_dataset = config_cifar100.dataset.name  # CIFAR100
+    initial_dist = "iid"
+    print(f"✅ Loaded config_cifar100.yaml: dataset={initial_dataset}")
+except Exception as e1:
+    try:
+        config_main = load_config("config/config.yaml")
+        initial_dataset = config_main.dataset.name  # CIFAR100 fallback
+        initial_dist = "iid"
+        print(f"✅ Loaded config.yaml: dataset={initial_dataset}")
+    except Exception as e2:
+        # Defaults fallback
+        initial_dataset = 'CIFAR100'
+        initial_dist = 'iid'
+        print(f"✅ Using defaults: dataset={initial_dataset}, dist={initial_dist} (errors: {e1}, {e2})")
+
 import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from server.server import app, fl_config
 
 import flask
 import threading
+
 
 
 def wait_for_postgres(host="postgres", port=5432, user="postgres",
@@ -128,16 +148,14 @@ def main():
     print(f"Database         : {db_url}")
     print("=" * 70 + "\n")
 
-    # ── Détermine le dataset initial depuis la config sauvegardée ────────────
-    initial_dataset  = fl_config.get('dataset', 'MNIST')
-    initial_dist     = fl_config.get('dataDistribution', 'iid')
-
-    print(f"📊 Initial dataset : {initial_dataset} ({initial_dist})")
+# ── Initial dataset from config/DB (FIXED) ────────────────────────────────
+    print(f"📊 Initial dataset from config: {initial_dataset} ({initial_dist})")
 
     try:
         model, test_loader = _get_model_and_loader(
             initial_dataset, initial_dist, '/app/data'
         )
+
     except Exception as e:
         print(f"❌ Failed to initialize model/data: {e}")
         sys.exit(1)
