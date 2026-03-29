@@ -65,6 +65,25 @@ class DashboardServer:
         # Fallback to environment variable
         return int(os.getenv('NUM_CLIENTS', '40'))
 
+    def _get_active_session_id(self):
+        """
+        Get the active (latest) session_id from server_sessions.
+        Returns None if no sessions exist.
+        """
+        try:
+            conn = psycopg2.connect(self.db_url)
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT session_id FROM server_sessions 
+                ORDER BY started_at DESC LIMIT 1
+            """)
+            result = cursor.fetchone()
+            conn.close()
+            return result[0] if result else None
+        except Exception as e:
+            print(f"⚠️ Error getting active session: {e}")
+            return None
+
     def _setup_routes(self):
         """Setup Flask routes"""
 
@@ -361,15 +380,28 @@ class DashboardServer:
             try:
                 conn = psycopg2.connect(self.db_url)
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT client_id, AVG(bytes_sent) / 1048576.0
-                    FROM client_metrics GROUP BY client_id ORDER BY client_id LIMIT 10
-                """)
+                session_id = self._get_active_session_id()
+                if session_id:
+                    cursor.execute("""
+                        SELECT cm.round_number, AVG(cm.bytes_sent / 1048576.0) as avg_bw_mb
+                        FROM client_metrics cm 
+                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
+                        WHERE rm.session_id = %s AND rm.global_test_accuracy IS NOT NULL
+                        GROUP BY cm.round_number 
+                        ORDER BY cm.round_number
+                    """, (session_id,))
+                else:
+                    cursor.execute("""
+                        SELECT round_number, 0.0 as avg_bw_mb 
+                        FROM round_metrics 
+                        WHERE session_id IS NULL 
+                        LIMIT 1
+                    """)
                 data = cursor.fetchall()
                 conn.close()
                 return jsonify({
-                    "labels": [f"Pi {str(row[0]).zfill(2)}" for row in data],
-                    "values": [round(row[1], 2) if row[1] else 0 for row in data]
+                    "rounds": [row[0] for row in data],
+                    "bandwidth_mb": [round(row[1], 2) if row[1] else 0.0 for row in data]
                 })
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
@@ -379,10 +411,18 @@ class DashboardServer:
             try:
                 conn = psycopg2.connect(self.db_url)
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT round_number, AVG(latency_ms)
-                    FROM client_metrics GROUP BY round_number ORDER BY round_number
-                """)
+                session_id = self._get_active_session_id()
+                if session_id:
+                    cursor.execute("""
+                        SELECT cm.round_number, AVG(cm.latency_ms)
+                        FROM client_metrics cm 
+                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
+                        WHERE rm.session_id = %s AND rm.global_test_accuracy IS NOT NULL
+                        GROUP BY cm.round_number 
+                        ORDER BY cm.round_number
+                    """, (session_id,))
+                else:
+                    cursor.execute("SELECT NULL, NULL")
                 data = cursor.fetchall()
                 conn.close()
                 return jsonify({
@@ -397,10 +437,18 @@ class DashboardServer:
             try:
                 conn = psycopg2.connect(self.db_url)
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT round_number, AVG(energy_wh)
-                    FROM client_metrics GROUP BY round_number ORDER BY round_number
-                """)
+                session_id = self._get_active_session_id()
+                if session_id:
+                    cursor.execute("""
+                        SELECT cm.round_number, AVG(cm.energy_wh)
+                        FROM client_metrics cm 
+                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
+                        WHERE rm.session_id = %s AND rm.global_test_accuracy IS NOT NULL
+                        GROUP BY cm.round_number 
+                        ORDER BY cm.round_number
+                    """, (session_id,))
+                else:
+                    cursor.execute("SELECT NULL, NULL")
                 data = cursor.fetchall()
                 conn.close()
                 return jsonify({
@@ -415,11 +463,19 @@ class DashboardServer:
             try:
                 conn = psycopg2.connect(self.db_url)
                 cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT round_number,
-                           AVG(packet_loss_rate), AVG(jitter_ms)
-                    FROM client_metrics GROUP BY round_number ORDER BY round_number
-                """)
+                session_id = self._get_active_session_id()
+                if session_id:
+                    cursor.execute("""
+                        SELECT cm.round_number,
+                               AVG(cm.packet_loss_rate), AVG(cm.jitter_ms)
+                        FROM client_metrics cm 
+                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
+                        WHERE rm.session_id = %s AND rm.global_test_accuracy IS NOT NULL
+                        GROUP BY cm.round_number 
+                        ORDER BY cm.round_number
+                    """, (session_id,))
+                else:
+                    cursor.execute("SELECT NULL, NULL, NULL")
                 data = cursor.fetchall()
                 conn.close()
                 return jsonify({

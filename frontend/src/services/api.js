@@ -57,10 +57,10 @@ export const exportData = () => api.get('/export');
 export const getAccuracyData = () => api.get('/accuracy');
 export const getLossData = () => api.get('/loss');
 export const getClientsData = () => api.get('/clients');
-export const getBandwidthData = () => api.get('/bandwidth');
-export const getLatencyData = () => api.get('/latency');
-export const getEnergyData = () => api.get('/energy');
-export const getNetworkMetricsData = () => api.get('/network_metrics');
+export const getBandwidthData = (params) => api.get('/bandwidth', { params });
+export const getLatencyData = (params) => api.get('/latency', { params });
+export const getEnergyData = (params) => api.get('/energy', { params });
+export const getNetworkMetricsData = (params) => api.get('/network_metrics', { params });
 export const getRoundsHistory = () => api.get('/rounds_history');
 export const getHistoryByStrategy = () => api.get('/history_by_strategy');
 

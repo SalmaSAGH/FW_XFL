@@ -7,8 +7,8 @@
 # ============================================================================
 
 experiment:
-  name: "mnist_fedavg_xfl_baseline"
-  description: "MNIST baseline experiment with FedAvg-XFL (10 Raspberry Pi)"
+  name: "cifar100_fedavg_xfl_baseline"
+  description: "CIFAR100 baseline experiment with FedAvg-XFL (10 Raspberry Pi)"
   seed: 42
 
 federated_learning:
@@ -18,15 +18,15 @@ federated_learning:
   local_epochs: 1
 
 dataset:
-  name: "MNIST"
+  name: "CIFAR100"
   data_distribution: "iid"
   train_test_split: 0.8
   batch_size: 128
 
 model:
-  name: "SimpleCNN"
-  input_shape: [1, 28, 28]
-  num_classes: 10
+  name: "CIFAR100CNN"
+  input_shape: [3, 32, 32]
+  num_classes: 100
 
 training:
   optimizer: "sgd"

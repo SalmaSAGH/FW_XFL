@@ -564,19 +564,7 @@
 
             <button class="btn btn-primary export-btn" onclick="exportData()">💾 Export to CSV</button>
 
-            <div class="chart-container">
-                <div class="chart-title">▲ Accuracy Evolution</div>
-                <div class="chart-wrapper">
-                    <canvas id="accuracyChart"></canvas>
-                </div>
-            </div>
 
-            <div class="chart-container">
-                <div class="chart-title">📉 Loss Evolution</div>
-                <div class="chart-wrapper">
-                    <canvas id="lossChart"></canvas>
-                </div>
-            </div>
 
             <div class="chart-container">
                 <div class="chart-title">📊 Bandwidth Usage (MB)</div>
@@ -680,39 +668,7 @@
             }
         };
 
-        const accuracyChart = new Chart(document.getElementById('accuracyChart'), {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    data: [],
-                    borderColor: '#4fc3f7',
-                    backgroundColor: 'rgba(79, 195, 247, 0.1)',
-                    borderWidth: 2,
-                    tension: 0.4,
-                    fill: true,
-                    pointRadius: 3
-                }]
-            },
-            options: chartConfig
-        });
 
-        const lossChart = new Chart(document.getElementById('lossChart'), {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [{
-                    data: [],
-                    borderColor: '#ef5350',
-                    backgroundColor: 'rgba(239, 83, 80, 0.1)',
-                    borderWidth: 2,
-                    tension: 0.4,
-                    fill: true,
-                    pointRadius: 3
-                }]
-            },
-            options: chartConfig
-        });
 
         const bandwidthChart = new Chart(document.getElementById('bandwidthChart'), {
             type: 'bar',
@@ -913,13 +869,7 @@
                 }
 
                 // Update charts
-                accuracyChart.data.labels = accuracy.rounds;
-                accuracyChart.data.datasets[0].data = accuracy.accuracy;
-                accuracyChart.update('none');
 
-                lossChart.data.labels = loss.rounds;
-                lossChart.data.datasets[0].data = loss.loss;
-                lossChart.update('none');
 
                 bandwidthChart.data.labels = bandwidth.labels || [];
                 bandwidthChart.data.datasets[0].data = bandwidth.values || [];

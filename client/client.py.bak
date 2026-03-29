@@ -202,12 +202,6 @@ class FLClient:
             # Step 2: Reload model/data if dataset changed
             self.reload_data_if_needed(server_dataset, server_distribution, verbose)
 
-            # DEBUG client loader batch shape
-            try:
-                first_batch = next(iter(self.train_loader))
-                print(f"DEBUG client.py Client{self.client_id} first batch data.shape: {first_batch[0].shape}")
-            except Exception as e:
-                print(f"DEBUG client.py Client{self.client_id} loader debug error: {e}")
 
             if verbose:
                 print(f"Client {self.client_id}: Round {current_round} | "
@@ -255,94 +249,32 @@ class FLClient:
                 trained_weights, xfl_strategy, xfl_param, current_round, verbose
             )
 
-# Step 7: Prepare payload (metrics collected AFTER transmission)
+            # Step 7: Collect metrics
             model_size_bytes = sum(
                 p.numel() * p.element_size()
                 for p in weights_to_send.values()
                 if hasattr(p, 'element_size')
             )
 
-            payload = {
-                "client_id": self.client_id,
-                "weights": self._weights_to_base64(weights_to_send),
-                "num_samples": num_samples,
-                "metrics": {}  # Placeholder - will be filled after transmission
-            }
-
-            if hasattr(self, '_quantization_meta') and self._quantization_meta:
-                payload["quantization_meta"] = self._quantization_meta
-                delattr(self, '_quantization_meta')
-
-            # MEASURE REAL TRANSMISSION ↓
-            start_tx = time.perf_counter()
-            response = requests.post(
-                f"{self.server_url}/api/submit_update",
-                json=payload,
-                timeout=30
-            )
-            tx_time = time.perf_counter() - start_tx
-            tx_latency_ms = tx_time * 1000  # Real end-to-end latency
-
-            if response.status_code != 200:
-                print(f"Client {self.client_id}: ❌ submit_update returned "
-                      f"{response.status_code}: {response.text[:200]}")
-                return False
-
-            result = response.json()
-
-            # NOW collect REAL metrics after successful transmission
-            network_metrics = {
-                "bytes_sent": model_size_bytes,
-                "bytes_received": model_size_bytes,
-                "transmission_time_sec": round(tx_time, 3),
-                "latency_ms": round(tx_latency_ms, 2),
-                "packet_loss_rate": 0.0,  # HTTP has no packet loss
-                "jitter_ms": 0.0,         # No jitter in single request
-                "http_status": response.status_code,
-                "is_real_measurement": True
-            }
+            import random
+            latency_ms = random.uniform(5, 50)
+            packet_loss_rate = random.uniform(0, 0.05)
+            jitter_ms = random.uniform(1, 10)
 
             full_metrics = self.metrics_collector.collect_full_metrics(
                 training_metrics=training_metrics,
                 model_weights=weights_to_send,
-                network_metrics=network_metrics
+                network_metrics={
+                    "bytes_sent": model_size_bytes,
+                    "bytes_received": model_size_bytes,
+                    "transmission_time": 0,
+                    "latency_ms": latency_ms,
+                    "packet_loss_rate": packet_loss_rate,
+                    "jitter_ms": jitter_ms
+                }
             )
 
-            # Store the REAL complete metrics to DB via server
-            payload_with_metrics = {
-                "client_id": self.client_id,
-                "weights": self._weights_to_base64(weights_to_send),
-                "num_samples": num_samples,
-                "metrics": full_metrics  # Now includes real transmission_time_sec, latency_ms
-            }
-
-            if hasattr(self, '_quantization_meta') and self._quantization_meta:
-                payload_with_metrics["quantization_meta"] = self._quantization_meta
-                delattr(self, '_quantization_meta')
-
-            # Send FINAL payload with REAL metrics to server
-            final_response = requests.post(
-                f"{self.server_url}/api/submit_update",
-                json=payload_with_metrics,
-                timeout=30
-            )
-
-            if final_response.status_code == 200:
-                result = final_response.json()
-                if verbose:
-                    print(f"Client {self.client_id}: ✅ Final metrics sent | "
-                          f"{result.get('submissions')} total submissions")
-            else:
-                print(f"Client {self.client_id}: ⚠️ Final metrics send failed "
-                      f"(status={final_response.status_code}) but model already sent")
-
-            if verbose:
-                print(f"Client {self.client_id}: ✅ Submitted | "
-                      f"{result.get('submissions')} updates received by server | "
-                      f"Real tx_time={tx_time:.3f}s | latency={tx_latency_ms:.1f}ms")
-
-            self._cleanup_memory()
-            return True
+            # Step 8: Send update to server
             payload = {
                 "client_id": self.client_id,
                 "weights": self._weights_to_base64(weights_to_send),

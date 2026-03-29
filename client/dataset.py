@@ -96,6 +96,8 @@ def load_dataset(
 
     if dataset_name in ["MNIST", "FashionMNIST"]:
         transform = transforms.Compose([
+            transforms.Grayscale(num_output_channels=1),
+            transforms.Resize((28, 28)),
             transforms.ToTensor(),
             transforms.Normalize((0.1307,), (0.3081,))
         ])
@@ -149,6 +151,10 @@ def load_dataset(
             root=data_dir, train=train, download=True,
             transform=transform, split='byclass'
         )
+        # DEBUG: Print first sample shape for EMNIST
+        if dataset_name == "EMNIST" and len(dataset) > 0:
+            sample_img, _ = dataset[0]
+            print(f"DEBUG dataset.py EMNIST first sample shape: {sample_img.shape}")
     else:
         dataset = dataset_map[dataset_name](
             root=data_dir, train=train, download=True, transform=transform

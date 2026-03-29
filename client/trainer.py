@@ -84,6 +84,7 @@ class LocalTrainer:
                 
                 # Forward pass
                 self.optimizer.zero_grad(set_to_none=True)  # Faster than zero_grad()
+                print(f"DEBUG trainer.py batch data.shape: {data.shape}")
                 output = self.model(data)
                 loss = self.criterion(output, target)
                 

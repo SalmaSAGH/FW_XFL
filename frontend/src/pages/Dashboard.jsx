@@ -4,8 +4,6 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, R
 import { 
   getStatus, 
   getConfig,
-  getAccuracyData, 
-  getLossData, 
   getClientsData, 
   getBandwidthData,
   getLatencyData,
@@ -21,10 +19,8 @@ function Dashboard() {
   const navigate = useNavigate();
   const [status, setStatus] = useState({});
   const [config, setConfig] = useState({});
-  const [accuracyData, setAccuracyData] = useState({ rounds: [], accuracy: [] });
-  const [lossData, setLossData] = useState({ rounds: [], loss: [] });
   const [clients, setClients] = useState([]);
-  const [bandwidthData, setBandwidthData] = useState({ labels: [], values: [] });
+  const [bandwidthData, setBandwidthData] = useState({ rounds: [], bandwidth_mb: [] });
   const [latencyData, setLatencyData] = useState({ rounds: [], latency: [] });
   const [energyData, setEnergyData] = useState({ rounds: [], energy: [] });
   const [networkMetrics, setNetworkMetrics] = useState({ rounds: [], packet_loss: [], jitter: [] });
@@ -80,19 +76,7 @@ function Dashboard() {
         statusRes = { data: null };
       }
       
-      try {
-        accuracyRes = await getAccuracyData();
-      } catch (e) {
-        console.warn('Accuracy fetch failed:', e.message);
-        accuracyRes = { data: null };
-      }
-      
-      try {
-        lossRes = await getLossData();
-      } catch (e) {
-        console.warn('Loss fetch failed:', e.message);
-        lossRes = { data: null };
-      }
+
       
       try {
         clientsRes = await getClientsData();
@@ -177,23 +161,15 @@ function Dashboard() {
       }
 
       // FIXED: Only update metrics data if we have valid data with actual content - preserve existing data
-      // Accuracy data - check for non-empty rounds array
-      if (accuracyRes && accuracyRes.data && accuracyRes.data.rounds && accuracyRes.data.rounds.length > 0) {
-        setAccuracyData(accuracyRes.data);
-      }
-      
-      // Loss data - check for non-empty rounds array
-      if (lossRes && lossRes.data && lossRes.data.rounds && lossRes.data.rounds.length > 0) {
-        setLossData(lossRes.data);
-      }
+
       
       // Clients data - check for non-empty clients array
       if (clientsRes && clientsRes.data && clientsRes.data.clients && clientsRes.data.clients.length > 0) {
         setClients(clientsRes.data.clients);
       }
       
-      // Bandwidth data - check for non-empty values array
-      if (bandwidthRes && bandwidthRes.data && bandwidthRes.data.values && bandwidthRes.data.values.length > 0) {
+      // Bandwidth data - check for non-empty rounds array
+      if (bandwidthRes && bandwidthRes.data && bandwidthRes.data.rounds && bandwidthRes.data.rounds.length > 0) {
         setBandwidthData(bandwidthRes.data);
       }
       
@@ -277,24 +253,9 @@ function Dashboard() {
     setLoading(false);
   };
 
-  // Prepare chart data - filter out null/undefined values
-  const accuracyChartData = accuracyData.rounds
-    .map((round, idx) => ({
-      round,
-      accuracy: accuracyData.accuracy[idx]
-    }))
-    .filter(item => item.accuracy != null && item.accuracy !== undefined);
-
-  const lossChartData = lossData.rounds
-    .map((round, idx) => ({
-      round,
-      loss: lossData.loss[idx]
-    }))
-    .filter(item => item.loss != null && item.loss !== undefined);
-
-  const bandwidthChartData = bandwidthData.labels.map((label, idx) => ({
-    label,
-    value: bandwidthData.values[idx]
+  const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
+    round,
+    bandwidth: bandwidthData.bandwidth_mb[idx]
   }));
 
   const latencyChartData = latencyData.rounds.map((round, idx) => ({
@@ -538,68 +499,29 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Charts Row 1 */}
-        <div className="grid-2" style={{ marginBottom: '20px' }}>
-          <div className="card">
-            <h2 className="panel-title">▲ Accuracy Evolution</h2>
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={accuracyChartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2d3348" />
-                <XAxis dataKey="round" stroke="#888" fontSize={10} />
-                <YAxis stroke="#888" fontSize={10} />
-                <Tooltip 
-                  contentStyle={{ background: '#252942', border: '1px solid #2d3348' }}
-                  labelStyle={{ color: '#fff' }}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="accuracy" 
-                  stroke="#4fc3f7" 
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
 
-          <div className="card">
-            <h2 className="panel-title">📉 Loss Evolution</h2>
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={lossChartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#2d3348" />
-                <XAxis dataKey="round" stroke="#888" fontSize={10} />
-                <YAxis stroke="#888" fontSize={10} />
-                <Tooltip 
-                  contentStyle={{ background: '#252942', border: '1px solid #2d3348' }}
-                  labelStyle={{ color: '#fff' }}
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="loss" 
-                  stroke="#ef5350" 
-                  strokeWidth={2}
-                  dot={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
 
         {/* Charts Row 2 */}
         <div className="grid-3" style={{ marginBottom: '20px' }}>
           <div className="card">
             <h2 className="panel-title">📊 Bandwidth Usage (MB)</h2>
             <ResponsiveContainer width="100%" height={150}>
-              <BarChart data={bandwidthChartData}>
+              <LineChart data={bandwidthChartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2d3348" />
-                <XAxis dataKey="label" stroke="#888" fontSize={8} />
+                <XAxis dataKey="round" stroke="#888" fontSize={10} />
                 <YAxis stroke="#888" fontSize={10} />
                 <Tooltip 
                   contentStyle={{ background: '#252942', border: '1px solid #2d3348' }}
                   labelStyle={{ color: '#fff' }}
                 />
-                <Bar dataKey="value" fill="#4fc3f7" />
-              </BarChart>
+                <Line 
+                  type="monotone" 
+                  dataKey="bandwidth" 
+                  stroke="#4fc3f7" 
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
             </ResponsiveContainer>
           </div>
 
