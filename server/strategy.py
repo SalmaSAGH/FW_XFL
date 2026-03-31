@@ -25,7 +25,7 @@ class FedAvg:
         self.xfl_strategy = xfl_strategy
         self.xfl_param = xfl_param
         
-        print(f"✅ {self.name} initialized with XFL strategy: {xfl_strategy}")
+        print(f"{self.name} initialized with XFL strategy: {xfl_strategy}")
         if xfl_strategy != "all_layers":
             print(f"   XFL parameter: {xfl_param}")
     
@@ -56,7 +56,7 @@ class FedAvg:
         # Select layers based on XFL strategy
         selected_layers = self._select_layers(all_layer_names)
         
-        print(f"📊 Aggregating {len(client_weights)} clients using {self.xfl_strategy}")
+        print(f"Aggregating {len(client_weights)} clients using {self.xfl_strategy}")
         print(f"   Total layers: {len(all_layer_names)}")
         print(f"   Aggregating: {len(selected_layers)} layers")
         
@@ -107,7 +107,7 @@ class FedAvg:
         """
         self.xfl_strategy = strategy
         self.xfl_param = param
-        print(f"🔄 XFL strategy updated to: {strategy} (param={param})")
+        print(f"XFL strategy updated to: {strategy} (param={param})")
     
     def get_xfl_info(self) -> Dict:
         """
@@ -133,7 +133,7 @@ class FedProx(FedAvg):
         super().__init__(xfl_strategy, xfl_param)
         self.name = "FedProx"
         self.mu = mu  # Proximal term coefficient
-        print(f"⚠️  FedProx proximal term (μ={mu}) - client-side implementation needed")
+        print(f"FedProx proximal term (mu={mu}) - client-side implementation needed")
 
 
 class XFL(FedAvg):
@@ -155,7 +155,7 @@ class XFL(FedAvg):
         self.sparsification_threshold = sparsification_threshold
         self.quantization_bits = quantization_bits
 
-        print(f"✅ {self.name} initialized")
+        print(f"{self.name} initialized")
         if xfl_variant == "sparsification":
             print(f"   Sparsification threshold: {sparsification_threshold}")
         elif xfl_variant == "quantization":
@@ -192,7 +192,7 @@ class XFL(FedAvg):
                     layer_updates[layer_name] = []
                 layer_updates[layer_name].append((layer_weight, num_samples))
 
-        print(f"📊 Aggregating {len(client_weights)} clients with XFL-{self.xfl_variant}")
+        print(f"Aggregating {len(client_weights)} clients with XFL-{self.xfl_variant}")
         print(f"   Layers received: {len(layer_updates)}")
 
         # Aggregate each layer - FIXED: force torch.float32 dtype
@@ -202,8 +202,8 @@ class XFL(FedAvg):
         for layer_name, updates in layer_updates.items():
             for i, (layer_weight, _) in enumerate(updates):
                 if not layer_weight.dtype == torch.float32:
-                    print(f"⚠️  Converting layer '{layer_name}' (client {i}) "
-                          f"from {layer_weight.dtype} → float32")
+                    print(f"Converting layer '{layer_name}' (client {i}) "
+                          f"from {layer_weight.dtype} to float32")
                     updates[i] = (layer_weight.float(), updates[i][1])
         
         for layer_name, updates in layer_updates.items():
@@ -220,7 +220,7 @@ class XFL(FedAvg):
 
             aggregated_weights[layer_name] = aggregated_layer.float()
 
-        print(f"✅ XFL aggregation complete: {len(aggregated_weights)} layers, all float32")
+        print(f"XFL aggregation complete: {len(aggregated_weights)} layers, all float32")
         return aggregated_weights
 
     def get_xfl_info(self) -> Dict:
@@ -283,6 +283,6 @@ def create_aggregation_strategy(
             xfl_param=xfl_param
         )
 
-    print(f"✅ Aggregation strategy '{strategy.name}' created with XFL: {xfl_strategy}")
+    print(f"Aggregation strategy '{strategy.name}' created with XFL: {xfl_strategy}")
 
     return strategy

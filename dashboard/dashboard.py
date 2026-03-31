@@ -12,6 +12,7 @@ import threading
 import time
 import os
 import sys
+import requests
 
 # Add parent directory to path for config import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -54,7 +55,6 @@ class DashboardServer:
         This ensures the dashboard always reflects what the user saved in Config page.
         """
         try:
-            import requests
             resp = requests.get('http://server:5000/api/config', timeout=5)
             cfg = resp.json().get('config', {})
             val = cfg.get('numClients')
@@ -100,7 +100,6 @@ class DashboardServer:
                 expected_clients = None
                 server_status = None
                 try:
-                    import requests
                     server_status = requests.get('http://server:5000/api/status', timeout=10).json()
                     expected_clients = server_status.get('clients_expected', None)
                 except:
@@ -332,7 +331,6 @@ class DashboardServer:
             selected_clients = set()
 
             try:
-                import requests
                 server_status = requests.get('http://server:5000/api/status', timeout=10).json()
                 round_in_progress = server_status.get('round_in_progress', False)
                 if round_in_progress:
@@ -516,7 +514,6 @@ class DashboardServer:
         @self.app.route('/api/register', methods=['POST'])
         def register():
             try:
-                import requests
                 response = requests.post('http://server:5000/api/register', json=request.get_json(), timeout=10)
                 return jsonify(response.json()), response.status_code
             except Exception as e:
@@ -525,7 +522,6 @@ class DashboardServer:
         @self.app.route('/api/login', methods=['POST'])
         def login():
             try:
-                import requests
                 response = requests.post('http://server:5000/api/login', json=request.get_json(), timeout=10)
                 return jsonify(response.json()), response.status_code
             except Exception as e:
@@ -534,7 +530,6 @@ class DashboardServer:
         @self.app.route('/api/logout', methods=['POST'])
         def logout():
             try:
-                import requests
                 response = requests.post('http://server:5000/api/logout', json=request.get_json(), timeout=10)
                 return jsonify(response.json()), response.status_code
             except Exception as e:
@@ -543,7 +538,6 @@ class DashboardServer:
         @self.app.route('/api/verify_token', methods=['POST'])
         def verify_token():
             try:
-                import requests
                 response = requests.post('http://server:5000/api/verify_token', json=request.get_json(), timeout=10)
                 return jsonify(response.json()), response.status_code
             except Exception as e:
@@ -552,7 +546,6 @@ class DashboardServer:
         @self.app.route('/api/config', methods=['GET'])
         def get_config():
             try:
-                import requests
                 response = requests.get('http://server:5000/api/config', timeout=10)
                 return jsonify(response.json()), response.status_code
             except Exception as e:
@@ -561,7 +554,6 @@ class DashboardServer:
         @self.app.route('/api/config/save', methods=['POST'])
         def save_config():
             try:
-                import requests
                 response = requests.post('http://server:5000/api/config/save', json=request.get_json(), timeout=10)
                 return jsonify(response.json()), response.status_code
             except Exception as e:
@@ -570,7 +562,6 @@ class DashboardServer:
         @self.app.route('/api/start_round', methods=['POST'])
         def start_round():
             try:
-                import requests
                 response = requests.post('http://server:5000/api/start_round', timeout=5)
                 return jsonify(response.json())
             except Exception as e:
@@ -579,7 +570,6 @@ class DashboardServer:
         @self.app.route('/api/xfl/set_strategy', methods=['POST'])
         def set_xfl_strategy():
             try:
-                import requests
                 response = requests.post('http://server:5000/xfl/set_strategy', json=request.get_json(), timeout=5)
                 return jsonify(response.json())
             except Exception as e:
@@ -597,10 +587,41 @@ class DashboardServer:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+        @self.app.route('/api/dse/sessions', methods=['GET'])
+        def dse_sessions():
+            try:
+                response = requests.get('http://server:5000/api/dse/sessions', timeout=10)
+                return jsonify(response.json()), response.status_code
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route('/api/dse/results/<session_id>', methods=['GET'])
+        def dse_results(session_id):
+            try:
+                response = requests.get(f'http://server:5000/api/dse/results/{session_id}', timeout=10)
+                return jsonify(response.json()), response.status_code
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route('/api/dse/sweep', methods=['POST'])
+        def dse_sweep():
+            try:
+                response = requests.post('http://server:5000/api/dse/sweep', json=request.get_json(), timeout=600)
+                return jsonify(response.json()), response.status_code
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route('/api/dse/status/<session_id>', methods=['GET'])
+        def dse_status(session_id):
+            try:
+                response = requests.get(f'http://server:5000/api/dse/status/{session_id}', timeout=10)
+                return jsonify(response.json()), response.status_code
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
         @self.app.route('/api/history_by_strategy')
         def get_history_by_strategy():
             try:
-                import requests
                 try:
                     response = requests.get('http://server:5000/api/history_by_strategy', timeout=30)
                 except:
@@ -629,3 +650,4 @@ if __name__ == "__main__":
         print(f"⚠️  Could not load config: {e}")
         db_url = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics"
     run_dashboard(db_url=db_url, port=5001)
+

@@ -174,6 +174,7 @@ function Dashboard() {
       }
       
       // Latency data - check for non-empty rounds array
+      
       if (latencyRes && latencyRes.data && latencyRes.data.rounds && latencyRes.data.rounds.length > 0) {
         setLatencyData(latencyRes.data);
       }
@@ -309,7 +310,7 @@ function Dashboard() {
             gap: '20px'
           }}>
             <div className="loading-spinner"></div>
-            <p style={{ color: '#888' }}>Loading dashboard data...</p>
+            <p style={{ color: '#888' }}>(...) Loading dashboard data...</p>
           </div>
         </main>
       </div>
@@ -324,6 +325,7 @@ function Dashboard() {
         <div className="header-nav">
           <a href="#" onClick={() => navigate('/config')}>Config</a>
           <a href="#" onClick={() => navigate('/dashboard')} className="active">Dashboard</a>
+          <a href="#" onClick={() => navigate('/dse')}>DSE</a>
           <a href="#" onClick={() => navigate('/history')}>History</a>
           <button className="logout-btn" onClick={handleLogout}>Logout</button>
         </div>
@@ -645,3 +647,4 @@ function Dashboard() {
 }
 
 export default Dashboard;
+

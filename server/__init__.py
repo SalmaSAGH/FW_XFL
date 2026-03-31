@@ -6,6 +6,7 @@ from .strategy import FedAvg, create_aggregation_strategy
 from .metrics import ServerMetricsCollector
 from .server import FLServer, create_server, run_server
 from .utils import setup_logging, validate_config
+pass  # Avoid circular import with dse.py
 
 __all__ = [
     'FedAvg',

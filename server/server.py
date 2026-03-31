@@ -25,9 +25,11 @@ import sys
 
 from .strategy import create_aggregation_strategy, XFL, FedAvg
 from .metrics import ServerMetricsCollector
+from .dse import start_dse_sweep, list_dse_sessions, load_dse_session, get_dse_job_status
 from client.model import create_model, DATASET_CONFIG  # ← DYNAMIC MODEL SUPPORT
 from client.dataset import load_dataset  # ← TEST DATA LOADER
 import gc
+
 
 # Database URL for dashboard APIs
 DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:newpassword@localhost:5432/xfl_metrics')
@@ -88,10 +90,10 @@ def _init_connection_pool():
                 password=password,
                 database=dbname
             )
-            print("✅ Server connection pool initialized (min: 2, max: 10)")
+            print("Server connection pool initialized (min: 2, max: 10)")
             return _connection_pool
         except Exception as e:
-            print(f"⚠️ Warning: Could not initialize connection pool: {e}")
+            print(f"WARNING: Warning: Could not initialize connection pool: {e}")
             return None
 
 
@@ -115,7 +117,7 @@ def _get_connection():
                 conn = _connection_pool.getconn()
                 return conn
         except Exception as e:
-            print(f"⚠️ Warning: Could not get connection from pool: {e}")
+            print(f"WARNING: Warning: Could not get connection from pool: {e}")
     
     return psycopg2.connect(DB_URL)
 
@@ -128,7 +130,7 @@ def _return_connection(conn):
         try:
             _connection_pool.putconn(conn)
         except Exception as e:
-            print(f"⚠️ Warning: Could not return connection to pool: {e}")
+            print(f"WARNING: Warning: Could not return connection to pool: {e}")
             try:
                 conn.close()
             except:
@@ -157,9 +159,9 @@ def _register_server_session():
         """, (CURRENT_SESSION_ID, time.time(), hostname))
         conn.commit()
         conn.close()
-        print(f"✅ Server session registered: {CURRENT_SESSION_ID} (host: {hostname})")
+        print(f"Server session registered: {CURRENT_SESSION_ID} (host: {hostname})")
     except Exception as e:
-        print(f"⚠️ Warning: Could not register server session: {e}")
+        print(f"WARNING: Warning: Could not register server session: {e}")
 
 
 def init_fl_config_database():
@@ -178,7 +180,7 @@ def init_fl_config_database():
 
     conn.commit()
     conn.close()
-    print("✅ FL config table initialized")
+    print("FL config table initialized")
 
 
 def save_fl_config_value(key: str, value: str):
@@ -279,7 +281,7 @@ def init_server_state_database():
 
     conn.commit()
     conn.close()
-    print("✅ FL server state table initialized")
+    print("FL server state table initialized")
 
 
 def save_server_state(key: str, value: str):
@@ -343,7 +345,7 @@ def init_user_database():
 
     conn.commit()
     conn.close()
-    print("✅ Users and sessions tables initialized")
+    print("Users and sessions tables initialized")
 
 
 def get_user_from_db(username: str):
@@ -459,7 +461,7 @@ class FLServer:
         
         self.test_loader = None
         
-        print(f"✅ FLServer initialized")
+        print(f"FLServer initialized")
         print(f"   Strategy: {self.aggregation_strategy.name}")
         print(f"   XFL: {xfl_strategy}")
         print(f"   Total rounds: {self.num_rounds}")
@@ -492,7 +494,7 @@ class FLServer:
                 return result[0]
 
         except Exception as e:
-            print(f"⚠️  Warning: Could not load current round from database: {e}")
+            print(f"WARNING:  Warning: Could not load current round from database: {e}")
         return 0
     
     def _save_current_round(self):
@@ -500,7 +502,7 @@ class FLServer:
         try:
             save_server_state('current_round', str(self.current_round))
         except Exception as e:
-            print(f"⚠️  Warning: Could not save current round to database: {e}")
+            print(f"WARNING:  Warning: Could not save current round to database: {e}")
     
     def start_round(self) -> Dict[str, Any]:
         """Start a new FL round"""
@@ -527,13 +529,13 @@ class FLServer:
                     
                     if 'clientsPerRound' in latest_config:
                         self.clients_per_round = int(latest_config['clientsPerRound'])
-                        print(f"✅ Using clientsPerRound from config: {self.clients_per_round}")
+                        print(f"Using clientsPerRound from config: {self.clients_per_round}")
                     
                     if 'numRounds' in latest_config:
                         self.num_rounds = int(latest_config['numRounds'])
-                        print(f"✅ Using numRounds from config: {self.num_rounds}")
+                        print(f"Using numRounds from config: {self.num_rounds}")
             except Exception as e:
-                print(f"⚠️  Warning: Could not reload config from database: {e}")
+                print(f"WARNING:  Warning: Could not reload config from database: {e}")
 
             self.current_round += 1
             self.round_in_progress = True
@@ -556,9 +558,9 @@ class FLServer:
                         "clients_expected": self.clients_per_round
                     }
                 )
-                print(f"✅ Round {self.current_round} metrics placeholder saved (session: {self.session_id})")
+                print(f"Round {self.current_round} metrics placeholder saved (session: {self.session_id})")
             except Exception as e:
-                print(f"⚠️  Warning: Could not save round metrics placeholder: {e}")
+                print(f"WARNING:  Warning: Could not save round metrics placeholder: {e}")
 
             import random
             total_clients = int(fl_config.get('numClients', 40))
@@ -617,7 +619,7 @@ class FLServer:
                 client_metrics
             )
 
-            print(f"   ✅ Received update from Client {client_id} "
+            print(f"   Received update from Client {client_id} "
                   f"({len(self.client_submissions)}/{self.clients_per_round})")
 
             if len(self.client_submissions) >= self.clients_per_round:
@@ -632,7 +634,7 @@ class FLServer:
     def _aggregate_round(self):
         """Aggregate client updates using XFL strategy"""
         xfl_info = self.aggregation_strategy.get_xfl_info()
-        print(f"\n📊 Aggregating {len(self.client_submissions)} clients with XFL: {xfl_info['strategy']}")
+        print(f"\nAggregating {len(self.client_submissions)} clients with XFL: {xfl_info['strategy']}")
 
         start_time = time.time()
 
@@ -672,9 +674,9 @@ class FLServer:
                 else:
                     self.global_model.load_state_dict(aggregated_weights, strict=False)
                 model_updated = True
-                print("✅ Global model updated successfully")
+                print("Global model updated successfully")
             except Exception as model_error:
-                print(f"⚠️  Model load_state_dict failed (continuing): {model_error}")
+                print(f"WARNING:  Model load_state_dict failed (continuing): {model_error}")
                 print("   Tensors will be skipped but round metrics still saved")
 
             aggregation_time = time.time() - start_time
@@ -684,7 +686,7 @@ class FLServer:
                 try:
                     test_loss, test_accuracy = self._evaluate_global_model()
                 except Exception as e:
-                    print(f"⚠️  Global model evaluation failed: {e}")
+                    print(f"WARNING:  Global model evaluation failed: {e}")
                     test_loss, test_accuracy = None, None
 
             xfl_info = self.aggregation_strategy.get_xfl_info()
@@ -703,12 +705,12 @@ class FLServer:
                     }
                     )
 
-            print(f"✅ Round {self.current_round} completed in {aggregation_time:.2f}s")
+            print(f"Round {self.current_round} completed in {aggregation_time:.2f}s")
             print(f"   🌍 Global Test → Loss: {test_loss:.4f} | Acc: {test_accuracy:.2f}%" if test_accuracy is not None else "   🌍 Global Test → SKIPPED")
 
         except Exception as e:
             aggregation_time = time.time() - start_time
-            print(f"❌ Aggregation failed for round {self.current_round}: {e}")
+            print(f"ERROR: Aggregation failed for round {self.current_round}: {e}")
             print(f"   Round will be completed anyway to prevent blocking")
 
         self._save_current_round()
@@ -795,7 +797,7 @@ class FLServer:
             self.global_model = create_model(model_name, num_classes, in_channels, input_size)
             
             new_params = sum(p.numel() for p in self.global_model.parameters())
-            print(f"✅ New model created: {new_params:,} params | Dataset: {dataset_name}")
+            print(f"New model created: {new_params:,} params | Dataset: {dataset_name}")
             
             self.current_dataset_name = dataset_name
             
@@ -804,10 +806,10 @@ class FLServer:
                 load_dataset(dataset_name, data_dir="./data", train=False),
                 batch_size=256, shuffle=False, num_workers=0
             )
-            print(f"✅ Test loader updated for {dataset_name}")
+            print(f"Test loader updated for {dataset_name}")
             
         except Exception as e:
-            print(f"❌ Model recreation failed: {e}")
+            print(f"ERROR: Model recreation failed: {e}")
     
     def get_server_status(self) -> Dict[str, Any]:
         with self.lock:
@@ -835,7 +837,7 @@ class FLServer:
                 
                 conn.close()
             except Exception as e:
-                print(f"⚠️ Warning: Could not get additional status from database: {e}")
+                print(f"WARNING: Warning: Could not get additional status from database: {e}")
             
             return {
                 "current_round": self.current_round,
@@ -910,7 +912,7 @@ try:
     # ── NEW: register this docker-compose up as a new session ────────────────
     _register_server_session()
 except Exception as e:
-    print(f"⚠️  Database initialization warning: {e}")
+    print(f"WARNING:  Database initialization warning: {e}")
     print("   Server will continue but auth features may not work properly")
 
 # Load FL config from database at startup
@@ -918,9 +920,10 @@ try:
     loaded_config = load_fl_config_from_db()
     if loaded_config:
         fl_config.update(loaded_config)
-        print("✅ FL config loaded from database")
+        print("FL config loaded from database")
 except Exception as e:
-    print(f"⚠️  Warning: Could not load FL config from database: {e}")
+    print(f"WARNING:  Warning: Could not load FL config from database: {e}")
+
 
 users_db = {}
 sessions = {}
@@ -945,17 +948,17 @@ def save_config():
     
     if fl_server is not None and 'clientsPerRound' in data:
         fl_server.clients_per_round = int(data['clientsPerRound'])
-        print(f"✅ Updated clients_per_round to {fl_server.clients_per_round}")
+        print(f"Updated clients_per_round to {fl_server.clients_per_round}")
     
     if 'clientsPerRound' in data:
         fl_config['clientsPerRound'] = int(data['clientsPerRound'])
-        print(f"✅ Updated fl_config clientsPerRound to {fl_config['clientsPerRound']}")
+        print(f"Updated fl_config clientsPerRound to {fl_config['clientsPerRound']}")
     
     if fl_server is not None and 'numRounds' in data:
         old_num_rounds = fl_server.num_rounds
         fl_server.num_rounds = int(data['numRounds'])
         fl_config['numRounds'] = int(data['numRounds'])
-        print(f"✅ Updated numRounds from {old_num_rounds} to {fl_server.num_rounds}")
+        print(f"Updated numRounds from {old_num_rounds} to {fl_server.num_rounds}")
     
     # ← FIXED EMNIST: Recreate global_model when dataset changes
     if 'dataset' in data:
@@ -1267,7 +1270,7 @@ def get_clients_data():
 
         conn.close()
     except Exception as e:
-        print(f"⚠️ Database error in /api/clients: {e}")
+        print(f"WARNING: Database error in /api/clients: {e}")
 
     current_round = last_completed_round
     round_in_progress = False
@@ -1697,6 +1700,53 @@ def health_check():
         return jsonify({"status": "unhealthy", "error": str(e)}), 500
 
 
+@app.route('/api/dse/sweep', methods=['POST'])
+def dse_sweep():
+    try:
+        data = request.get_json()
+        if data is None:
+            return jsonify({"error": "Invalid JSON data"}), 400
+
+        session_id = start_dse_sweep(data)
+        print(f"DSE sweep started: {session_id}")
+        return jsonify({"session_id": session_id, "status": "started"})
+    except Exception as e:
+        print(f"DSE sweep error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/dse/sessions', methods=['GET'])
+def dse_sessions():
+    try:
+        sessions = list_dse_sessions()
+        return jsonify({"sessions": sessions})
+    except Exception as e:
+        print(f"DSE sessions error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/dse/results/<session_id>', methods=['GET'])
+def dse_results(session_id):
+    try:
+        result = load_dse_session(session_id)
+        if result is None:
+            return jsonify({"error": "Session not found"}), 404
+        return jsonify(result)
+    except Exception as e:
+        print(f"DSE results error for {session_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/dse/status/<session_id>', methods=['GET'])
+def dse_status(session_id):
+    try:
+        status = get_dse_job_status(session_id)
+        return jsonify({"session_id": session_id, "status": status})
+    except Exception as e:
+        print(f"DSE status error for {session_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 def create_server(
     global_model: torch.nn.Module,
     test_loader=None,
@@ -1728,30 +1778,30 @@ def create_server(
             for key, value in saved_config.items():
                 if key not in ['numClients']:
                     fl_config[key] = value
-            print("✅ Loaded config from database")
+            print("Loaded config from database")
             
             if 'clientsPerRound' in saved_config:
                 fl_server.clients_per_round = int(saved_config['clientsPerRound'])
-                print(f"✅ Updated clients_per_round to {fl_server.clients_per_round} from saved config")
+                print(f"Updated clients_per_round to {fl_server.clients_per_round} from saved config")
             
             if 'numRounds' in saved_config:
                 old_num_rounds = fl_server.num_rounds
                 fl_server.num_rounds = int(saved_config['numRounds'])
-                print(f"✅ Updated numRounds from {old_num_rounds} to {fl_server.num_rounds} from saved config")
+                print(f"Updated numRounds from {old_num_rounds} to {fl_server.num_rounds} from saved config")
             
             if 'strategy' in saved_config:
                 strategy = saved_config.get('strategy', 'all_layers')
                 param = saved_config.get('xflParam', 3)
-                print(f"✅ Loading strategy from config: {strategy}, param: {param}")
+                print(f"Loading strategy from config: {strategy}, param: {param}")
                 fl_server.set_xfl_strategy(strategy, param)
     except Exception as e:
-        print(f"⚠️  Warning: Could not load config: {e}")
+        print(f"WARNING:  Warning: Could not load config: {e}")
     
     return fl_server
 
 
 def run_server(host: str = "localhost", port: int = 5000, debug: bool = False):
     """Run Flask server"""
-    print(f"\n🚀 Starting FL Server on {host}:{port}")
+    print(f"\nSTARTING: Starting FL Server on {host}:{port}")
     print(f"   Session ID: {CURRENT_SESSION_ID}")
     app.run(host=host, port=port, debug=debug, threaded=True)

@@ -47,7 +47,7 @@ class DatasetPartitioner:
             start_idx = i * samples_per_client
             end_idx = start_idx + samples_per_client
             client_indices.append(indices[start_idx:end_idx].tolist())
-        print(f"✅ IID partition created: {samples_per_client} samples per client")
+        print(f"IID partition created: {samples_per_client} samples per client")
         return client_indices
 
     def _partition_non_iid(self, indices: np.ndarray) -> List[List[int]]:
@@ -73,7 +73,7 @@ class DatasetPartitioner:
             np.random.shuffle(client_data)
             client_indices.append(client_data)
 
-        print(f"✅ Non-IID partition created: each client has {classes_per_client} classes")
+        print(f"Non-IID partition created: each client has {classes_per_client} classes")
         return client_indices
 
     def get_client_dataset(self, client_id: int) -> Subset:
@@ -161,9 +161,9 @@ def load_dataset(
         )
 
     split_name = "training" if train else "test"
-    print(f"✅ {dataset_name} {split_name} set loaded: {len(dataset)} samples")
+    print(f"{dataset_name} {split_name} set loaded: {len(dataset)} samples")
     if hasattr(dataset, 'classes'):
-        print(f"   📊 Number of classes: {len(dataset.classes)}")
+        print(f"   Number of classes: {len(dataset.classes)}")
 
     return dataset
 
@@ -189,8 +189,8 @@ def create_single_client_loader(
         client_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=2,
-        pin_memory=True
+        num_workers=0,
+        pin_memory=False
     )
 
 
@@ -223,8 +223,7 @@ def create_dataloaders(
             pin_memory=False
         )
         client_loaders.append(client_loader)
-        print(f"   Client {cid}: {len(client_dataset)} samples, "
-              f"{len(client_loader)} batches")
+        print(f"   Client {cid}: {len(client_dataset)} samples, {len(client_loader)} batches")
 
     test_loader = DataLoader(
         test_dataset,

@@ -259,8 +259,7 @@ def create_model(model_name: str, num_classes: int = 10,
                          f"Available: SimpleCNN, CIFAR100CNN, EMNISTCNN, LeNet5")
 
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"✅ Model '{model_name}' created | {num_classes} classes | "
-          f"{total_params:,} params")
+    print(f"Model '{model_name}' created | {num_classes} classes | {total_params:,} params")
     return model
 
 

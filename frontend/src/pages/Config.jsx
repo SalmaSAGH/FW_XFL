@@ -172,6 +172,7 @@ function Config() {
         <div className="header-nav">
           <a href="#" onClick={() => navigate('/config')} className="active">Config</a>
           <a href="#" onClick={() => navigate('/dashboard')}>Dashboard</a>
+          <a href="#" onClick={() => navigate('/dse')}>DSE</a>
           <a href="#" onClick={() => navigate('/history')}>History</a>
           <button className="logout-btn" onClick={handleLogout}>Logout</button>
         </div>

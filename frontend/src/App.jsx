@@ -5,6 +5,7 @@ import Register from './pages/Register';
 import Config from './pages/Config';
 import Dashboard from './pages/Dashboard';
 import History from './pages/History';
+import DSE from './pages/DSE';
 
 // Protected Route component
 const ProtectedRoute = ({ children }) => {
@@ -38,6 +39,14 @@ function App() {
           } 
         />
         <Route 
+          path="/dse" 
+          element={
+            <ProtectedRoute>
+              <DSE />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
           path="/history" 
           element={
             <ProtectedRoute>
@@ -53,3 +62,4 @@ function App() {
 }
 
 export default App;
+
