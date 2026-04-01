@@ -25,7 +25,7 @@ import sys
 
 from .strategy import create_aggregation_strategy, XFL, FedAvg
 from .metrics import ServerMetricsCollector
-from .dse import start_dse_sweep, list_dse_sessions, load_dse_session, get_dse_job_status
+from .dse import start_dse_sweep, list_dse_sessions, load_dse_session, load_all_dse_results, get_dse_job_status, get_dse_job_progress
 from client.model import create_model, DATASET_CONFIG  # ← DYNAMIC MODEL SUPPORT
 from client.dataset import load_dataset  # ← TEST DATA LOADER
 import gc
@@ -1725,6 +1725,16 @@ def dse_sessions():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/api/dse/all_results', methods=['GET'])
+def dse_all_results():
+    try:
+        results = load_all_dse_results()
+        return jsonify({"results": results, "session_count": len(list_dse_sessions())})
+    except Exception as e:
+        print(f"DSE all results error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/dse/results/<session_id>', methods=['GET'])
 def dse_results(session_id):
     try:
@@ -1744,6 +1754,16 @@ def dse_status(session_id):
         return jsonify({"session_id": session_id, "status": status})
     except Exception as e:
         print(f"DSE status error for {session_id}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/dse/progress/<session_id>', methods=['GET'])
+def dse_progress(session_id):
+    try:
+        progress = get_dse_job_progress(session_id)
+        return jsonify(progress)
+    except Exception as e:
+        print(f"DSE progress error for {session_id}: {e}")
         return jsonify({"error": str(e)}), 500
 
 

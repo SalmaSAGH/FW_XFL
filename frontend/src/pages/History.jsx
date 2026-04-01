@@ -119,6 +119,7 @@ function History() {
           <div className="header-nav">
             <a href="#" onClick={() => navigate('/config')}>Config</a>
             <a href="#" onClick={() => navigate('/dashboard')}>Dashboard</a>
+            <a href="#" onClick={() => navigate('/dse')}>DSE</a>
             <a href="#" onClick={() => navigate('/history')} className="active">History</a>
             <button className="logout-btn" onClick={handleLogout}>Logout</button>
           </div>

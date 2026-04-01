@@ -73,6 +73,16 @@ def load_dse_session(session_id: str) -> Any:
     return {"session_id": session_id, "results": []}
 
 
+def load_all_dse_results() -> List[Dict[str, Any]]:
+    """Load and merge results from all DSE sessions."""
+    all_results = []
+    for session in list_dse_sessions():
+        loaded = load_dse_session(session.get('id'))
+        if loaded and isinstance(loaded.get('results'), list):
+            all_results.extend(loaded['results'])
+    return all_results
+
+
 def _run_dse_background(sweep_config: Dict[str, Any], session_id: str):
     try:
         with DSE_JOB_LOCK:
@@ -102,6 +112,45 @@ def start_dse_sweep(sweep_config: Dict[str, Any]) -> str:
 def get_dse_job_status(session_id: str) -> str:
     with DSE_JOB_LOCK:
         return DSE_JOB_STATUS.get(session_id, "unknown")
+
+
+def get_dse_job_progress(session_id: str) -> Dict[str, Any]:
+    session_dir = os.path.join(DSE_RESULTS_DIR, session_id)
+    if not os.path.exists(session_dir):
+        return {
+            "session_id": session_id,
+            "status": get_dse_job_status(session_id),
+            "completed_configs": 0,
+            "total_configs": 0,
+            "best_accuracy": 0.0
+        }
+
+    temp_configs_dir = os.path.join(session_dir, 'temp_configs')
+    total_configs = len(glob.glob(os.path.join(temp_configs_dir, '*.yaml')))
+
+    results_file = os.path.join(session_dir, 'results.json')
+    completed_configs = 0
+    best_accuracy = 0.0
+    if os.path.exists(results_file):
+        try:
+            with open(results_file, 'r', encoding='utf-8') as f:
+                results = json.load(f)
+            completed_configs = len(results)
+            best_accuracy = max(
+                (float(r.get('metrics', {}).get('final_accuracy', 0.0)) for r in results),
+                default=0.0
+            )
+        except Exception:
+            completed_configs = 0
+            best_accuracy = 0.0
+
+    return {
+        "session_id": session_id,
+        "status": get_dse_job_status(session_id),
+        "completed_configs": completed_configs,
+        "total_configs": total_configs,
+        "best_accuracy": round(best_accuracy, 2)
+    }
 
 
 def _evaluate_model(model: torch.nn.Module, loader: torch.utils.data.DataLoader) -> (float, float):
@@ -155,12 +204,20 @@ def _build_sweep_configs(sweep_config: Dict[str, Any]) -> List[Dict[str, Any]]:
         combo.update({name: value for name, value in zip(param_names, values)})
         all_combinations.append(combo)
 
-    if len(all_combinations) <= max_configs:
-        selected = all_combinations
+    search_strategy = sweep_config.get('searchStrategy', 'grid').lower()
+    if search_strategy == 'random':
+        rng = random.Random(int(sweep_config.get('randomSeed', 42)))
+        if len(all_combinations) <= max_configs:
+            selected = all_combinations
+        else:
+            selected = rng.sample(all_combinations, max_configs)
     else:
-        step = len(all_combinations) / max_configs
-        indices = sorted({min(len(all_combinations) - 1, int(round(i * step))) for i in range(max_configs)})
-        selected = [all_combinations[i] for i in indices]
+        if len(all_combinations) <= max_configs:
+            selected = all_combinations
+        else:
+            step = len(all_combinations) / max_configs
+            indices = sorted({min(len(all_combinations) - 1, int(round(i * step))) for i in range(max_configs)})
+            selected = [all_combinations[i] for i in indices]
 
     return selected
 
@@ -257,6 +314,7 @@ def run_dse_sweep(sweep_config: Dict[str, Any], session_id: str = None) -> Dict[
     sweep_configs = _build_sweep_configs(sweep_config)
     results = []
 
+    results_file = os.path.join(session_dir, 'results.json')
     for idx, config in enumerate(sweep_configs):
         config = dict(config)
         if 'dataset' not in config or config['dataset'] is None:
@@ -294,6 +352,12 @@ def run_dse_sweep(sweep_config: Dict[str, Any], session_id: str = None) -> Dict[
                     'total_time': 0.0
                 }
             })
+
+        try:
+            with open(results_file, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=2)
+        except Exception as e:
+            print(f"[DSE] Failed to save intermediate results: {e}")
 
         gc.collect()
 

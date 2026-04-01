@@ -619,6 +619,14 @@ class DashboardServer:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+        @self.app.route('/api/dse/progress/<session_id>', methods=['GET'])
+        def dse_progress(session_id):
+            try:
+                response = requests.get(f'http://server:5000/api/dse/progress/{session_id}', timeout=10)
+                return jsonify(response.json()), response.status_code
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
         @self.app.route('/api/history_by_strategy')
         def get_history_by_strategy():
             try:
