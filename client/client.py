@@ -3,6 +3,7 @@ ULTRA-FAST Federated Learning Client
 Optimized for speed with minimal overhead
 """
 
+import os
 import requests
 import pickle
 import base64
@@ -16,6 +17,7 @@ from .trainer import LocalTrainer
 from .metrics import MetricsCollector
 from .model import create_model, DATASET_CONFIG
 from .dataset import create_single_client_loader
+from config.config_parser import load_config
 
 import gc
 
@@ -72,7 +74,34 @@ class FLClient:
             weight_decay=weight_decay
         )
 
-        self.metrics_collector = MetricsCollector(client_id=client_id)
+        try:
+            config_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                'config',
+                'config.yaml'
+            )
+            if not os.path.exists(config_path):
+                config_path = os.path.join(os.getcwd(), 'config', 'config.yaml')
+
+            config = load_config(config_path)
+            if hasattr(config.network, 'model_dump'):
+                network_config = config.network.model_dump()
+            else:
+                network_config = config.network.dict()
+        except Exception as e:
+            print(f"⚠️ Could not load network config: {e}")
+            network_config = {
+                'simulate_constraints': True,
+                'latency_ms': 50,
+                'latency_std_ms': 10,
+                'packet_loss_rate': 0.02,
+                'jitter_ms': 5
+            }
+
+        self.metrics_collector = MetricsCollector(
+            client_id=client_id,
+            network_config=network_config
+        )
         self.metrics_collector.start_collection()
 
         print(f"✅ FLClient {client_id} initialized | dataset={dataset_name} | "
@@ -291,16 +320,15 @@ class FLClient:
             result = response.json()
 
             # NOW collect REAL metrics after successful transmission
-            network_metrics = {
-                "bytes_sent": model_size_bytes,
-                "bytes_received": model_size_bytes,
-                "transmission_time_sec": round(tx_time, 3),
-                "latency_ms": round(tx_latency_ms, 2),
-                "packet_loss_rate": 0.0,  # HTTP has no packet loss
-                "jitter_ms": 0.0,         # No jitter in single request
+            network_metrics = self.metrics_collector.get_network_metrics(
+                bytes_sent=model_size_bytes,
+                bytes_received=model_size_bytes,
+                transmission_time=tx_time
+            )
+            network_metrics.update({
                 "http_status": response.status_code,
                 "is_real_measurement": True
-            }
+            })
 
             full_metrics = self.metrics_collector.collect_full_metrics(
                 training_metrics=training_metrics,

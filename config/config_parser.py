@@ -72,6 +72,15 @@ class NetworkConfig(BaseModel):
     jitter_ms: float = Field(ge=0)
 
 
+class EnergyConfig(BaseModel):
+    """Energy estimation model parameters"""
+    cpu_idle_watts: float = Field(ge=0, default=10.0)
+    cpu_peak_watts: float = Field(gt=0, default=60.0)
+    network_energy_per_bit_joules: float = Field(gt=0, default=1e-6)
+    power_exponent: float = Field(ge=1.0, default=1.0)
+    use_frequency_scaling: bool = True
+
+
 class MonitoringConfig(BaseModel):
     """Monitoring configuration"""
     enabled: bool = True
@@ -109,6 +118,7 @@ class Config(BaseModel):
     training: TrainingConfig
     strategy: StrategyConfig
     network: NetworkConfig
+    energy: EnergyConfig
     monitoring: MonitoringConfig
     server: ServerConfig
     client: ClientConfig

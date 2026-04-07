@@ -168,7 +168,7 @@ function Config() {
     <div className="page-container">
       {/* Header */}
       <header className="header">
-        <h1>🔷 XFL-RPiLab - Configuration</h1>
+        <h1>🔷 XFL-FW - Configuration</h1>
         <div className="header-nav">
           <a href="#" onClick={() => navigate('/config')} className="active">Config</a>
           <a href="#" onClick={() => navigate('/dashboard')}>Dashboard</a>

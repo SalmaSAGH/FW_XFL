@@ -63,6 +63,7 @@ export const getEnergyData = (params) => api.get('/energy', { params });
 export const getNetworkMetricsData = (params) => api.get('/network_metrics', { params });
 export const getRoundsHistory = () => api.get('/rounds_history');
 export const getHistoryByStrategy = () => api.get('/history_by_strategy');
+export const resetMetrics = () => api.post('/metrics/reset');
 
 // DSE APIs
 export const runDseSweep = (sweepConfig) => api.post('/dse/sweep', sweepConfig, { timeout: 600000 });
@@ -71,6 +72,7 @@ export const getDseProgress = (sessionId) => api.get(`/dse/progress/${sessionId}
 export const getDseResults = (sessionId) => api.get(`/dse/results/${sessionId}`);
 export const getDseAllResults = () => api.get('/dse/all_results');
 export const getDseSessions = () => api.get('/dse/sessions');
+export const resetDse = () => api.post('/dse/reset');
 
 export default api;
 

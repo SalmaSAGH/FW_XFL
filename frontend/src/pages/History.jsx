@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { getHistoryByStrategy } from '../services/api';
+import { getHistoryByStrategy, resetMetrics } from '../services/api';
 
 // Strategy colors
 const strategyColors = {
@@ -48,6 +48,8 @@ function History() {
   const [selectedStrategy, setSelectedStrategy] = useState(null);
   const [selectedExperiment, setSelectedExperiment] = useState(null);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [resetting, setResetting] = useState(false);
+  const [resetStatus, setResetStatus] = useState('');
 
   useEffect(() => {
     fetchHistoryData();
@@ -85,6 +87,27 @@ function History() {
     navigate('/login');
   };
 
+  const handleResetData = async () => {
+    setResetting(true);
+    setResetStatus('');
+    setError(null);
+
+    try {
+      const response = await resetMetrics();
+      if (response.data && response.data.status === 'ok') {
+        setResetStatus('Données réinitialisées.');
+        fetchHistoryData();
+      } else {
+        setError('Impossible de réinitialiser les données.');
+      }
+    } catch (err) {
+      console.error('Reset failed:', err);
+      setError('Échec de la réinitialisation : ' + (err.response?.data?.error || err.message));
+    } finally {
+      setResetting(false);
+    }
+  };
+
   const handleStrategyClick = (strategy) => {
     setSelectedStrategy(strategy);
     if (strategy.experiments.length > 0) {
@@ -115,7 +138,7 @@ function History() {
     return (
       <div className="page-container">
         <header className="header">
-          <h1>🔷 XFL-RPiLab - History</h1>
+          <h1>🔷 XFL-FW - History</h1>
           <div className="header-nav">
             <a href="#" onClick={() => navigate('/config')}>Config</a>
             <a href="#" onClick={() => navigate('/dashboard')}>Dashboard</a>
@@ -145,11 +168,15 @@ function History() {
     <div className="page-container">
       {/* Header */}
       <header className="header">
-        <h1>🔷 XFL-RPiLab - History</h1>
+        <h1>🔷 XFL-FW - History</h1>
         <div className="header-nav">
           <a href="#" onClick={() => navigate('/config')}>Config</a>
           <a href="#" onClick={() => navigate('/dashboard')}>Dashboard</a>
+          <a href="#" onClick={() => navigate('/dse')}>DSE</a>
           <a href="#" onClick={() => navigate('/history')} className="active">History</a>
+          <button className="btn btn-secondary" onClick={handleResetData} disabled={resetting} style={{ marginRight: '10px' }}>
+            {resetting ? 'Réinitialisation...' : 'Réinitialiser'}
+          </button>
           <button className="logout-btn" onClick={handleLogout}>Logout</button>
         </div>
       </header>
@@ -164,6 +191,17 @@ function History() {
             color: 'white'
           }}>
             {error}
+          </div>
+        )}
+        {resetStatus && (
+          <div style={{ 
+            padding: '15px', 
+            marginBottom: '20px', 
+            borderRadius: '4px',
+            background: '#4caf50',
+            color: 'white'
+          }}>
+            {resetStatus}
           </div>
         )}
 

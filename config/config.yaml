@@ -39,12 +39,19 @@ strategy:
   num_layers: null
 
 network:
-  simulate_constraints: false
+  simulate_constraints: true
   latency_ms: 50
   latency_std_ms: 10
   bandwidth_mbps: 10
-  packet_loss_rate: 0.0
+  packet_loss_rate: 0.02
   jitter_ms: 5
+
+energy:
+  cpu_idle_watts: 10.0
+  cpu_peak_watts: 60.0
+  network_energy_per_bit_joules: 1e-6
+  power_exponent: 1.0
+  use_frequency_scaling: true
 
 monitoring:
   enabled: true

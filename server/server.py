@@ -25,7 +25,7 @@ import sys
 
 from .strategy import create_aggregation_strategy, XFL, FedAvg
 from .metrics import ServerMetricsCollector
-from .dse import start_dse_sweep, list_dse_sessions, load_dse_session, load_all_dse_results, get_dse_job_status, get_dse_job_progress
+from .dse import start_dse_sweep, list_dse_sessions, load_dse_session, load_all_dse_results, get_dse_job_status, get_dse_job_progress, reset_dse_data
 from client.model import create_model, DATASET_CONFIG  # ← DYNAMIC MODEL SUPPORT
 from client.dataset import load_dataset  # ← TEST DATA LOADER
 import gc
@@ -599,10 +599,37 @@ class FLServer:
                     "message": "No round in progress"
                 }
 
-            if any(sub["client_id"] == client_id for sub in self.client_submissions):
+            existing_submission = next(
+                (sub for sub in self.client_submissions if sub["client_id"] == client_id),
+                None
+            )
+            if existing_submission is not None:
+                # Allow the second final metrics submission to update stored client metrics
+                if client_metrics:
+                    try:
+                        self.metrics_collector.update_client_metrics(
+                            self.current_round,
+                            client_id,
+                            client_metrics
+                        )
+                        existing_submission["metrics"] = client_metrics
+                        return {
+                            "status": "updated",
+                            "message": f"Client {client_id} metrics updated for round {self.current_round}",
+                            "round": self.current_round,
+                            "submissions": len(self.client_submissions)
+                        }
+                    except Exception as e:
+                        print(f"WARNING: Failed to update duplicate client metrics: {e}")
+                        return {
+                            "status": "duplicate",
+                            "message": f"Client {client_id} has already submitted for this round"
+                        }
                 return {
                     "status": "duplicate",
-                    "message": f"Client {client_id} has already submitted for this round"
+                    "message": f"Client {client_id} has already submitted for this round",
+                    "round": self.current_round,
+                    "submissions": len(self.client_submissions)
                 }
 
             self.client_submissions.append({
@@ -1170,6 +1197,23 @@ def get_metrics_summary():
     return jsonify(summary)
 
 
+@app.route('/api/metrics/reset', methods=['POST'])
+def reset_metrics():
+    if fl_server is None:
+        return jsonify({"error": "Server not initialized"}), 500
+
+    try:
+        fl_server.metrics_collector.clear_database()
+        conn = psycopg2.connect(DB_URL)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM server_sessions")
+        conn.commit()
+        conn.close()
+        return jsonify({"status": "ok", "message": "Metrics and history reset"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/api/accuracy', methods=['GET'])
 def get_accuracy_data():
     try:
@@ -1732,6 +1776,19 @@ def dse_all_results():
         return jsonify({"results": results, "session_count": len(list_dse_sessions())})
     except Exception as e:
         print(f"DSE all results error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/dse/reset', methods=['POST'])
+def dse_reset():
+    try:
+        success = reset_dse_data()
+        if success:
+            return jsonify({"status": "ok", "message": "DSE data reset successfully"})
+        else:
+            return jsonify({"error": "Failed to reset DSE data"}), 500
+    except Exception as e:
+        print(f"DSE reset error: {e}")
         return jsonify({"error": str(e)}), 500
 
 

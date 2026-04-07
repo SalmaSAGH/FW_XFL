@@ -241,7 +241,7 @@ class DashboardServer:
                 conn.close()
                 return jsonify({
                     "rounds": [row[0] for row in data],
-                    "accuracy": [round(row[1], 2) if row[1] else None for row in data]
+                    "accuracy": [round(row[1], 2) if row[1] is not None else None for row in data]
                 })
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
@@ -259,7 +259,7 @@ class DashboardServer:
                 conn.close()
                 return jsonify({
                     "rounds": [row[0] for row in data],
-                    "loss": [round(row[1], 4) if row[1] else None for row in data]
+                    "loss": [round(row[1], 4) if row[1] is not None else None for row in data]
                 })
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
@@ -425,7 +425,7 @@ class DashboardServer:
                 conn.close()
                 return jsonify({
                     "rounds": [row[0] for row in data],
-                    "latency": [round(row[1], 2) if row[1] else None for row in data]
+                    "latency": [round(row[1], 2) if row[1] is not None else None for row in data]
                 })
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
@@ -451,7 +451,7 @@ class DashboardServer:
                 conn.close()
                 return jsonify({
                     "rounds": [row[0] for row in data],
-                    "energy": [round(row[1], 4) if row[1] else None for row in data]
+                    "energy": [round(row[1], 4) if row[1] is not None else None for row in data]
                 })
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
@@ -465,7 +465,8 @@ class DashboardServer:
                 if session_id:
                     cursor.execute("""
                         SELECT cm.round_number,
-                               AVG(cm.packet_loss_rate), AVG(cm.jitter_ms)
+                               COALESCE(AVG(cm.packet_loss_rate), 0.0) as avg_packet_loss,
+                               COALESCE(AVG(cm.jitter_ms), 0.0) as avg_jitter
                         FROM client_metrics cm 
                         INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
                         WHERE rm.session_id = %s AND rm.global_test_accuracy IS NOT NULL
@@ -478,8 +479,8 @@ class DashboardServer:
                 conn.close()
                 return jsonify({
                     "rounds": [row[0] for row in data],
-                    "packet_loss": [round(row[1] * 100, 4) if row[1] else None for row in data],
-                    "jitter": [round(row[2], 2) if row[2] else None for row in data]
+                    "packet_loss": [round(row[1] * 100, 4) if row[1] is not None else None for row in data],
+                    "jitter": [round(row[2], 2) if row[2] is not None else None for row in data]
                 })
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
@@ -575,6 +576,14 @@ class DashboardServer:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+        @self.app.route('/api/metrics/reset', methods=['POST'])
+        def reset_metrics():
+            try:
+                response = requests.post('http://server:5000/api/metrics/reset', timeout=10)
+                return jsonify(response.json()), response.status_code
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
         @self.app.route('/api/export')
         def export_csv():
             try:
@@ -623,6 +632,22 @@ class DashboardServer:
         def dse_progress(session_id):
             try:
                 response = requests.get(f'http://server:5000/api/dse/progress/{session_id}', timeout=10)
+                return jsonify(response.json()), response.status_code
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route('/api/dse/all_results', methods=['GET'])
+        def dse_all_results():
+            try:
+                response = requests.get('http://server:5000/api/dse/all_results', timeout=10)
+                return jsonify(response.json()), response.status_code
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route('/api/dse/reset', methods=['POST'])
+        def dse_reset():
+            try:
+                response = requests.post('http://server:5000/api/dse/reset', timeout=10)
                 return jsonify(response.json()), response.status_code
             except Exception as e:
                 return jsonify({"error": str(e)}), 500

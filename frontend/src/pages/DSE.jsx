@@ -4,7 +4,7 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   ScatterChart, Scatter, ZAxis, Cell 
 } from 'recharts';
-import { runDseSweep, getDseStatus, getDseProgress, getDseResults, getDseAllResults, getDseSessions } from '../services/api';
+import { runDseSweep, getDseStatus, getDseProgress, getDseResults, getDseAllResults, getDseSessions, resetDse } from '../services/api';
 
 function DSE() {
   const navigate = useNavigate();
@@ -32,6 +32,7 @@ function DSE() {
   const [currentSweepSessionId, setCurrentSweepSessionId] = useState(localStorage.getItem('dseSessionId') || null);
   const [currentSweepStatus, setCurrentSweepStatus] = useState(null);
   const [currentSweepProgress, setCurrentSweepProgress] = useState({ completed_configs: 0, total_configs: 0, best_accuracy: 0.0 });
+  const [resetting, setResetting] = useState(false);
 
   useEffect(() => {
     loadSessions();
@@ -220,6 +221,30 @@ function DSE() {
     }
   };
 
+  const handleResetData = async () => {
+    setResetting(true);
+    setMessage({ type: '', text: '' });
+
+    try {
+      const response = await resetDse();
+      if (response.data && response.data.status === 'ok') {
+        setMessage({ type: 'success', text: 'Données DSE réinitialisées.' });
+        setSweepResults([]);
+        setSessions([]);
+        setSelectedSession(null);
+        clearSweepSessionId();
+        loadSessions();
+      } else {
+        setMessage({ type: 'error', text: 'Impossible de réinitialiser les données DSE.' });
+      }
+    } catch (err) {
+      console.error('Reset failed:', err);
+      setMessage({ type: 'error', text: 'Échec de la réinitialisation : ' + (err.response?.data?.error || err.message) });
+    } finally {
+      setResetting(false);
+    }
+  };
+
   // Transform results for charts (accuracy vs lr example)
   const accuracyVsLrData = sweepResults.map(r => ({
     lr: r.config.learningRate,
@@ -274,6 +299,9 @@ function DSE() {
           <a href="#" onClick={() => navigate('/dashboard')}>Dashboard</a>
           <a href="#" onClick={() => navigate('/dse')} className="active">DSE</a>
           <a href="#" onClick={() => navigate('/history')}>History</a>
+          <button className="btn btn-secondary" onClick={handleResetData} disabled={resetting} style={{ marginRight: '10px' }}>
+            {resetting ? 'Réinitialisation...' : 'Réinitialiser'}
+          </button>
           <button className="logout-btn" onClick={handleLogout}>Logout</button>
         </div>
       </header>
@@ -357,13 +385,13 @@ function DSE() {
             </button>
             {currentSweepSessionId && (
               <div style={{ marginTop: '15px', color: '#fff' }}>
-                <strong>Session en cours:</strong> {currentSweepSessionId}
+                <strong>Current session:</strong> {currentSweepSessionId}
                 <br />
                 <strong>Statut:</strong> {currentSweepStatus || 'unknown'}
                 <br />
                 <strong>Progression:</strong> {currentSweepProgress.completed_configs}/{currentSweepProgress.total_configs} configs
                 <br />
-                <strong>Meilleure accuracy:</strong> {displayBestAccuracy.toFixed(2)}%
+                <strong>Best accuracy:</strong> {displayBestAccuracy.toFixed(2)}%
                 {currentSweepStatus === 'completed' && (
                   <button className="btn" style={{ marginLeft: '10px' }} onClick={() => loadSessionResults(currentSweepSessionId)}>
                     Charger les résultats

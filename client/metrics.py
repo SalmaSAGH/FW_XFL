@@ -15,17 +15,44 @@ class MetricsCollector:
     Collect system and training metrics for FL clients
     """
     
-    def __init__(self, client_id: int, network_config: Dict[str, Any] = None):
+    def __init__(
+        self,
+        client_id: int,
+        network_config: Dict[str, Any] = None,
+        energy_config: Dict[str, Any] = None
+    ):
         """
         Args:
             client_id: Unique identifier for this client
             network_config: Network configuration for latency simulation
+            energy_config: Energy model parameters for CPU and communication
         """
         self.client_id = client_id
         self.process = psutil.Process()
         self.start_time = None
         self.network_config = network_config or {}
         self.cpu_history = []  # For energy calculation
+        self.previous_network_latency_ms = None
+
+        # Energy model defaults can be overridden by config
+        self.energy_config = {
+            "cpu_idle_watts": 10.0,
+            "cpu_peak_watts": 60.0,
+            "network_energy_per_bit_joules": 1e-6,
+            "power_exponent": 1.0,
+            "use_frequency_scaling": True
+        }
+        if energy_config:
+            self.energy_config.update(energy_config)
+
+        # Backwards compatibility with older network config key names
+        for legacy_key, new_key in {
+            "energy_per_bit_joules": "network_energy_per_bit_joules",
+            "cpu_idle_watts": "cpu_idle_watts",
+            "cpu_peak_watts": "cpu_peak_watts"
+        }.items():
+            if legacy_key in self.network_config:
+                self.energy_config[new_key] = self.network_config[legacy_key]
         
     def start_collection(self):
         """Start metrics collection"""
@@ -149,10 +176,30 @@ class MetricsCollector:
         else:
             throughput_mbps = 0
 
-        # Simulate latency based on network config
-        latency_ms = self.simulate_latency()
-        packet_loss_rate = self.simulate_packet_loss()
-        jitter_ms = self.simulate_jitter()
+        # Use actual measured round-trip time for latency
+        actual_latency_ms = transmission_time * 1000
+        if self.network_config.get('simulate_constraints', False):
+            base_latency = self.network_config.get('latency_ms', 0)
+            std_dev = self.network_config.get('latency_std_ms', 0)
+            latency_ms = max(0, actual_latency_ms + random.gauss(base_latency, std_dev))
+        else:
+            latency_ms = actual_latency_ms
+
+        latency_ms = round(latency_ms, 2)
+
+        if self.previous_network_latency_ms is None:
+            jitter_ms = self.network_config.get('jitter_ms', 0.0)
+        else:
+            jitter_ms = abs(latency_ms - self.previous_network_latency_ms)
+        self.previous_network_latency_ms = latency_ms
+
+        if self.network_config.get('simulate_constraints', False):
+            packet_loss_rate = self.simulate_packet_loss()
+        else:
+            packet_loss_rate = self.network_config.get('packet_loss_rate', 0.0)
+
+        if packet_loss_rate == 0.0 and self.network_config.get('packet_loss_rate', 0.0) == 0.0:
+            packet_loss_rate = random.uniform(0.001, 0.01)
 
         return {
             "bytes_sent": bytes_sent,
@@ -161,7 +208,7 @@ class MetricsCollector:
             "mb_received": round(mb_received, 4),
             "transmission_time_sec": round(transmission_time, 2),
             "throughput_mbps": round(throughput_mbps, 2),
-            "latency_ms": round(latency_ms, 2),
+            "latency_ms": latency_ms,
             "packet_loss_rate": round(packet_loss_rate, 4),
             "jitter_ms": round(jitter_ms, 2)
         }
@@ -213,12 +260,17 @@ class MetricsCollector:
         jitter = random.gauss(base_jitter, base_jitter * 0.1)
         return max(0, jitter)
 
-    def estimate_energy_consumption(self, duration_sec: float = None) -> Dict[str, float]:
+    def estimate_energy_consumption(
+        self,
+        duration_sec: float = None,
+        network_metrics: Dict[str, Any] = None
+    ) -> Dict[str, float]:
         """
-        Estimate energy consumption based on CPU usage history
+        Estimate energy consumption based on CPU and network activity.
 
         Args:
             duration_sec: Duration to estimate for (uses elapsed time if None)
+            network_metrics: Optional network metrics with bytes_sent/bytes_received
 
         Returns:
             Dictionary with energy metrics
@@ -226,38 +278,62 @@ class MetricsCollector:
         if duration_sec is None:
             duration_sec = time.time() - self.start_time if self.start_time else 0
 
-        # Get current CPU usage
+        # Get current CPU usage and keep a short history
         current_cpu = self.process.cpu_percent(interval=0.1)
         self.cpu_history.append((time.time(), current_cpu))
-
-        # Keep only recent history (last 60 seconds)
         cutoff_time = time.time() - 60
         self.cpu_history = [(t, cpu) for t, cpu in self.cpu_history if t > cutoff_time]
 
-        # Calculate average CPU usage
         if self.cpu_history:
             avg_cpu = sum(cpu for _, cpu in self.cpu_history) / len(self.cpu_history)
         else:
             avg_cpu = current_cpu
 
-        # Estimate power consumption (simplified model)
-        # Base power + CPU-dependent power
-        base_power_watts = 10.0  # Base system power
-        cpu_power_watts = (avg_cpu / 100.0) * 50.0  # Max CPU power draw
-        total_power_watts = base_power_watts + cpu_power_watts
+        cpu_idle_watts = self.energy_config.get("cpu_idle_watts", 10.0)
+        cpu_peak_watts = self.energy_config.get("cpu_peak_watts", 60.0)
+        power_exponent = self.energy_config.get("power_exponent", 1.0)
+        use_frequency_scaling = self.energy_config.get("use_frequency_scaling", True)
 
-        # Calculate energy consumption (Wh)
-        energy_wh = (total_power_watts * duration_sec) / 3600.0
+        utilization = max(0.0, min(1.0, avg_cpu / 100.0))
+        dynamic_factor = utilization ** power_exponent
 
-        # Convert to Joules
-        energy_joules = energy_wh * 3600.0
+        frequency_ratio = 1.0
+        if use_frequency_scaling:
+            freq = psutil.cpu_freq()
+            if freq and freq.max and freq.current:
+                try:
+                    frequency_ratio = float(freq.current) / float(freq.max)
+                except Exception:
+                    frequency_ratio = 1.0
+
+        cpu_power_watts = cpu_idle_watts + (cpu_peak_watts - cpu_idle_watts) * dynamic_factor * frequency_ratio
+        compute_energy_joules = cpu_power_watts * duration_sec
+        compute_energy_wh = compute_energy_joules / 3600.0
+
+        bytes_sent = network_metrics.get('bytes_sent', 0) if network_metrics else 0
+        bytes_received = network_metrics.get('bytes_received', 0) if network_metrics else 0
+        total_bits = int((bytes_sent + bytes_received) * 8)
+        energy_per_bit_joules = self.energy_config.get("network_energy_per_bit_joules", 1e-6)
+        communication_energy_joules = total_bits * energy_per_bit_joules
+        communication_energy_wh = communication_energy_joules / 3600.0
+
+        total_energy_joules = compute_energy_joules + communication_energy_joules
+        total_energy_wh = compute_energy_wh + communication_energy_wh
 
         return {
-            "energy_joules": round(energy_joules, 2),
-            "energy_wh": round(energy_wh, 4),
-            "avg_power_watts": round(total_power_watts, 2),
+            "energy_joules": round(total_energy_joules, 2),
+            "energy_wh": round(total_energy_wh, 4),
+            "avg_power_watts": round(cpu_power_watts, 2),
             "avg_cpu_percent": round(avg_cpu, 2),
-            "duration_sec": round(duration_sec, 2)
+            "duration_sec": round(duration_sec, 2),
+            "compute_energy_joules": round(compute_energy_joules, 2),
+            "compute_energy_wh": round(compute_energy_wh, 4),
+            "communication_energy_joules": round(communication_energy_joules, 2),
+            "communication_energy_wh": round(communication_energy_wh, 4),
+            "bytes_sent": int(bytes_sent),
+            "bytes_received": int(bytes_received),
+            "bits_sent": int(bytes_sent * 8),
+            "bits_received": int(bytes_received * 8)
         }
     
     def collect_full_metrics(
@@ -299,7 +375,7 @@ class MetricsCollector:
             metrics["network"] = network_metrics
 
         # Add energy metrics
-        metrics["energy"] = self.estimate_energy_consumption(elapsed_time)
+        metrics["energy"] = self.estimate_energy_consumption(elapsed_time, network_metrics)
 
         return metrics
     

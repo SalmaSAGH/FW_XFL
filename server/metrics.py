@@ -429,8 +429,8 @@ class ServerMetricsCollector:
             """, (round_number, client_id, client_metrics.get('timestamp', time.time()),
                   training.get('loss'), training.get('accuracy'), training.get('training_time'),
                   training.get('num_samples'), model.get('total_mb'), system.get('process_cpu_percent'),
-                  system.get('process_memory_mb'), network.get('bytes_sent'), network.get('bytes_received'),
-                  network.get('latency_ms'), network.get('packet_loss_rate'), network.get('jitter_ms'),
+                  system.get('process_memory_mb'), network.get('bytes_sent', 0), network.get('bytes_received', 0),
+                  network.get('latency_ms', 0.0), network.get('packet_loss_rate', 0.0), network.get('jitter_ms', 0.0),
                   client_metrics.get('energy', {}).get('energy_joules'),
                   client_metrics.get('energy', {}).get('energy_wh'),
                   client_metrics.get('energy', {}).get('avg_power_watts'),
@@ -441,7 +441,78 @@ class ServerMetricsCollector:
         except Exception as e:
             print(f"❌ Failed to store client metrics after retries: {e}")
             raise
-    
+
+    def update_client_metrics(self, round_number: int, client_id: int, client_metrics: Dict[str, Any]):
+        """Update an existing client metrics row or insert a new one if missing."""
+        def _do_update(conn):
+            cursor = conn.cursor()
+            training = client_metrics.get('training', {})
+            system = client_metrics.get('system', {})
+            model = client_metrics.get('model', {})
+            network = client_metrics.get('network', {})
+            cursor.execute("""
+                UPDATE client_metrics
+                SET timestamp = %s,
+                    training_loss = %s,
+                    training_accuracy = %s,
+                    training_time_sec = %s,
+                    num_samples = %s,
+                    model_size_mb = %s,
+                    cpu_percent = %s,
+                    memory_mb = %s,
+                    bytes_sent = %s,
+                    bytes_received = %s,
+                    latency_ms = %s,
+                    packet_loss_rate = %s,
+                    jitter_ms = %s,
+                    energy_joules = %s,
+                    energy_wh = %s,
+                    avg_power_watts = %s,
+                    metrics_json = %s
+                WHERE round_number = %s AND client_id = %s
+            """, (
+                client_metrics.get('timestamp', time.time()),
+                training.get('loss'),
+                training.get('accuracy'),
+                training.get('training_time'),
+                training.get('num_samples'),
+                model.get('total_mb'),
+                system.get('process_cpu_percent'),
+                system.get('process_memory_mb'),
+                network.get('bytes_sent', 0),
+                network.get('bytes_received', 0),
+                network.get('latency_ms', 0.0),
+                network.get('packet_loss_rate', 0.0),
+                network.get('jitter_ms', 0.0),
+                client_metrics.get('energy', {}).get('energy_joules'),
+                client_metrics.get('energy', {}).get('energy_wh'),
+                client_metrics.get('energy', {}).get('avg_power_watts'),
+                psycopg2.extras.Json(client_metrics),
+                round_number,
+                client_id
+            ))
+            if cursor.rowcount == 0:
+                cursor.execute("""
+                    INSERT INTO client_metrics (round_number, client_id, timestamp, training_loss, training_accuracy,
+                     training_time_sec, num_samples, model_size_mb, cpu_percent, memory_mb, bytes_sent, bytes_received,
+                     latency_ms, packet_loss_rate, jitter_ms, energy_joules, energy_wh, avg_power_watts, metrics_json)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (round_number, client_id, client_metrics.get('timestamp', time.time()),
+                      training.get('loss'), training.get('accuracy'), training.get('training_time'),
+                      training.get('num_samples'), model.get('total_mb'), system.get('process_cpu_percent'),
+                      system.get('process_memory_mb'), network.get('bytes_sent', 0), network.get('bytes_received', 0),
+                      network.get('latency_ms', 0.0), network.get('packet_loss_rate', 0.0), network.get('jitter_ms', 0.0),
+                      client_metrics.get('energy', {}).get('energy_joules'),
+                      client_metrics.get('energy', {}).get('energy_wh'),
+                      client_metrics.get('energy', {}).get('avg_power_watts'),
+                      psycopg2.extras.Json(client_metrics)))
+
+        try:
+            self._execute_with_retry(_do_update)
+        except Exception as e:
+            print(f"❌ Failed to update client metrics after retries: {e}")
+            raise
+
     def get_round_metrics(self, round_number: int = None) -> List[Dict[str, Any]]:
         """Retrieve round metrics"""
         conn = self._get_connection()

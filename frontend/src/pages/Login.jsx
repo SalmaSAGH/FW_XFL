@@ -59,7 +59,7 @@ function Login() {
     <div className="login-container">
       <div className="login-box">
         <div className="login-logo">
-          <h1>🔷 XFL-RPiLab</h1>
+          <h1>🔷 XFL-Framework</h1>
           <p>Federated Learning Dashboard</p>
         </div>
 

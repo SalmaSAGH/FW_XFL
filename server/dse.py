@@ -83,6 +83,23 @@ def load_all_dse_results() -> List[Dict[str, Any]]:
     return all_results
 
 
+def reset_dse_data() -> bool:
+    """Reset all DSE data by deleting the results directory."""
+    try:
+        if os.path.exists(DSE_RESULTS_DIR):
+            import shutil
+            shutil.rmtree(DSE_RESULTS_DIR)
+        # Recreate the directory
+        os.makedirs(DSE_RESULTS_DIR, exist_ok=True)
+        # Clear job statuses
+        global DSE_JOB_STATUS
+        DSE_JOB_STATUS.clear()
+        return True
+    except Exception as e:
+        print(f"Error resetting DSE data: {e}")
+        return False
+
+
 def _run_dse_background(sweep_config: Dict[str, Any], session_id: str):
     try:
         with DSE_JOB_LOCK:

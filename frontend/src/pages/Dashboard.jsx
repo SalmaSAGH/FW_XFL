@@ -12,7 +12,8 @@ import {
   getRoundsHistory,
   startRound,
   setXflStrategy,
-  exportData
+  exportData,
+  resetMetrics
 } from '../services/api';
 
 function Dashboard() {
@@ -31,6 +32,8 @@ function Dashboard() {
   const [message, setMessage] = useState({ type: '', text: '' });
   const [dataError, setDataError] = useState(false);
   const [serverAvailable, setServerAvailable] = useState(true);
+  const [resetting, setResetting] = useState(false);
+  const [resetStatus, setResetStatus] = useState('');
   const [consecutiveErrors, setConsecutiveErrors] = useState(0);
   const [lastSuccessfulFetch, setLastSuccessfulFetch] = useState(null);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -254,6 +257,27 @@ function Dashboard() {
     setLoading(false);
   };
 
+  const handleResetData = async () => {
+    setResetting(true);
+    setResetStatus('');
+    setMessage({ type: '', text: '' });
+
+    try {
+      const response = await resetMetrics();
+      if (response.data && response.data.status === 'ok') {
+        setResetStatus('Données réinitialisées.');
+        fetchAllData();
+      } else {
+        setMessage({ type: 'error', text: 'Impossible de réinitialiser les données.' });
+      }
+    } catch (error) {
+      console.error('Reset failed:', error);
+      setMessage({ type: 'error', text: 'Échec de la réinitialisation : ' + (error.response?.data?.error || error.message) });
+    } finally {
+      setResetting(false);
+    }
+  };
+
   const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
     round,
     bandwidth: bandwidthData.bandwidth_mb[idx]
@@ -292,11 +316,14 @@ function Dashboard() {
     return (
       <div className="page-container">
         <header className="header">
-          <h1>🔷 XFL-RPiLab - Dashboard</h1>
+          <h1>🔷 XFL-FW - Dashboard</h1>
           <div className="header-nav">
             <a href="#" onClick={() => navigate('/config')}>Config</a>
             <a href="#" onClick={() => navigate('/dashboard')} className="active">Dashboard</a>
             <a href="#" onClick={() => navigate('/history')}>History</a>
+            <button className="btn btn-secondary" onClick={handleResetData} disabled={resetting} style={{ marginRight: '10px' }}>
+              {resetting ? 'Réinitialisation...' : 'Réinitialiser'}
+            </button>
             <button className="logout-btn" onClick={handleLogout}>Logout</button>
           </div>
         </header>
@@ -321,12 +348,15 @@ function Dashboard() {
     <div className="page-container">
       {/* Header */}
       <header className="header">
-        <h1>🔷 XFL-RPiLab - Dashboard</h1>
+        <h1>🔷 XFL-FW - Dashboard</h1>
         <div className="header-nav">
           <a href="#" onClick={() => navigate('/config')}>Config</a>
           <a href="#" onClick={() => navigate('/dashboard')} className="active">Dashboard</a>
           <a href="#" onClick={() => navigate('/dse')}>DSE</a>
           <a href="#" onClick={() => navigate('/history')}>History</a>
+          <button className="btn btn-secondary" onClick={handleResetData} disabled={resetting} style={{ marginRight: '10px' }}>
+            {resetting ? 'Réinitialisation...' : 'Réinitialiser'}
+          </button>
           <button className="logout-btn" onClick={handleLogout}>Logout</button>
         </div>
       </header>

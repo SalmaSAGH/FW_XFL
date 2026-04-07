@@ -79,7 +79,7 @@ function Register() {
     <div className="login-container">
       <div className="login-box">
         <div className="login-logo">
-          <h1>🔷 XFL-RPiLab</h1>
+          <h1>🔷 XFL-Framework</h1>
           <p>Create New Account</p>
         </div>
 

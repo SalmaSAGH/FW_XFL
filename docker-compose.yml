@@ -55,6 +55,7 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./data:/app/data
+      - ./results:/app/results
       - ./server:/app/server
       - ./client:/app/client
       - ./config:/app/config
