@@ -69,7 +69,11 @@ def load_dse_session(session_id: str) -> Any:
     results_file = os.path.join(session_dir, "results.json")
     if os.path.exists(results_file):
         with open(results_file, 'r', encoding='utf-8') as f:
-            return {"session_id": session_id, "results": json.load(f)}
+            results = json.load(f)
+        for result in results:
+            if isinstance(result, dict):
+                result['session_id'] = session_id
+        return {"session_id": session_id, "results": results}
     return {"session_id": session_id, "results": []}
 
 
@@ -81,6 +85,23 @@ def load_all_dse_results() -> List[Dict[str, Any]]:
         if loaded and isinstance(loaded.get('results'), list):
             all_results.extend(loaded['results'])
     return all_results
+
+
+def load_all_dse_results_grouped_by_dataset() -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Load and group results from all DSE sessions by dataset.
+    Each dataset gets its own list of results.
+    """
+    results_by_dataset = {}
+    all_results = load_all_dse_results()
+    
+    for result in all_results:
+        dataset = result.get('config', {}).get('dataset', 'UNKNOWN')
+        if dataset not in results_by_dataset:
+            results_by_dataset[dataset] = []
+        results_by_dataset[dataset].append(result)
+    
+    return results_by_dataset
 
 
 def reset_dse_data() -> bool:

@@ -94,7 +94,7 @@ class ServerMetricsCollector:
                 host = 'localhost'
                 port = '5432'
                 dbname = 'postgres'
-            
+                
             # Create connection pool with keepalive settings for long-running applications
             self._connection_pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=2,

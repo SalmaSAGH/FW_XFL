@@ -88,11 +88,11 @@ def main():
         server_url=server_url,
         local_epochs=args.local_epochs,
         timeout=120,
-        dataset_name=args.dataset,        # ← IMPORTANT: synchroniser current_dataset_name
-        num_clients=args.num_clients,     # ← IMPORTANT: pour reload_data_if_needed
-        batch_size=args.batch_size,       # ← IMPORTANT
-        distribution=args.distribution,  # ← IMPORTANT
-        data_dir="/app/data"              # ← IMPORTANT
+        dataset_name=args.dataset,        
+        num_clients=args.num_clients,     
+        batch_size=args.batch_size,       
+        distribution=args.distribution,  
+        data_dir="/app/data"             
     )
 
     print(f"✅ Client {args.client_id} READY and waiting for rounds\n")

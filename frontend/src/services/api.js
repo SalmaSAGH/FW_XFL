@@ -71,6 +71,8 @@ export const getDseStatus = (sessionId) => api.get(`/dse/status/${sessionId}`);
 export const getDseProgress = (sessionId) => api.get(`/dse/progress/${sessionId}`);
 export const getDseResults = (sessionId) => api.get(`/dse/results/${sessionId}`);
 export const getDseAllResults = () => api.get('/dse/all_results');
+export const getDseResultsByDataset = () => api.get('/dse/results_by_dataset');
+export const getDseResultsForDataset = (datasetName) => api.get(`/dse/results_for_dataset/${datasetName}`);
 export const getDseSessions = () => api.get('/dse/sessions');
 export const resetDse = () => api.post('/dse/reset');
 

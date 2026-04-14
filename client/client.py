@@ -210,7 +210,7 @@ class FLClient:
             server_dataset = data.get('dataset_name', 'MNIST')
             server_distribution = data.get('data_distribution', 'iid')
 
-            # NEW: Shape mismatch debug logging (Step 3.5)
+            
             local_state = self.trainer.model.state_dict()
             debug_layers = ['conv1.weight', 'conv2.weight', 'fc1.weight']
             for layer in debug_layers:

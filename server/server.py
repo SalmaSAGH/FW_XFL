@@ -25,7 +25,7 @@ import sys
 
 from .strategy import create_aggregation_strategy, XFL, FedAvg
 from .metrics import ServerMetricsCollector
-from .dse import start_dse_sweep, list_dse_sessions, load_dse_session, load_all_dse_results, get_dse_job_status, get_dse_job_progress, reset_dse_data
+from .dse import start_dse_sweep, list_dse_sessions, load_dse_session, load_all_dse_results, load_all_dse_results_grouped_by_dataset, get_dse_job_status, get_dse_job_progress, reset_dse_data
 from client.model import create_model, DATASET_CONFIG  # ← DYNAMIC MODEL SUPPORT
 from client.dataset import load_dataset  # ← TEST DATA LOADER
 import gc
@@ -439,7 +439,7 @@ class FLServer:
         xfl_param: int = 3
     ):
         self.global_model = global_model
-        self.current_dataset_name = "MNIST"  # ← TRACK CURRENT DATASET
+        self.current_dataset_name = "MNIST"  
         self.aggregation_strategy = create_aggregation_strategy(
             aggregation_strategy,
             xfl_strategy=xfl_strategy,
@@ -517,7 +517,7 @@ class FLServer:
                 return {
                     "status": "in_progress",
                     "round": self.current_round,
-                    "message": "Round already in progress"
+                    "message": "Clients are busy submitting updates"
                 }
 
             # Reload config from database to get latest values
@@ -666,15 +666,16 @@ class FLServer:
         start_time = time.time()
 
         try:
+            # Extraction des poids et échantillons de chaque client
             client_weights = [sub["weights"] for sub in self.client_submissions]
             client_num_samples = [sub["num_samples"] for sub in self.client_submissions]
-
+            # Dé-quantification si nécessaire
             has_quantization = any(sub.get("quantization_meta") for sub in self.client_submissions)
 
             if has_quantization and xfl_info['variant'] == 'quantization':
                 print("   🔧 Applying dequantization before aggregation...")
                 client_weights = self._dequantize_client_weights(client_weights)
-
+            # Appel à la stratégie d'agrégation (FedAvg ou XFL)
             aggregated_weights = self.aggregation_strategy.aggregate(
                 client_weights,
                 client_num_samples
@@ -711,6 +712,7 @@ class FLServer:
             test_loss, test_accuracy = None, None
             if self.test_loader is not None:
                 try:
+                    # Évaluation du modèle global après agrégation
                     test_loss, test_accuracy = self._evaluate_global_model()
                 except Exception as e:
                     print(f"WARNING:  Global model evaluation failed: {e}")
@@ -1152,9 +1154,9 @@ def submit_update():
 
     if client_id is None or weights_b64 is None or num_samples is None:
         return jsonify({"error": "Missing required fields"}), 400
-
+    # Décodage des poids
     weights = base64_to_weights(weights_b64)
-
+    # Stockage
     result = fl_server.submit_client_update(
         client_id=client_id,
         model_weights=weights,
@@ -1776,6 +1778,38 @@ def dse_all_results():
         return jsonify({"results": results, "session_count": len(list_dse_sessions())})
     except Exception as e:
         print(f"DSE all results error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/dse/results_by_dataset', methods=['GET'])
+def dse_results_by_dataset():
+    """Get DSE results grouped by dataset"""
+    try:
+        results_by_dataset = load_all_dse_results_grouped_by_dataset()
+        return jsonify({
+            "results_by_dataset": results_by_dataset,
+            "datasets": list(results_by_dataset.keys()),
+            "total_datasets": len(results_by_dataset),
+            "total_results": sum(len(v) for v in results_by_dataset.values())
+        })
+    except Exception as e:
+        print(f"DSE results by dataset error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/dse/results_for_dataset/<dataset_name>', methods=['GET'])
+def dse_results_for_dataset(dataset_name):
+    """Get DSE results for a specific dataset"""
+    try:
+        all_results = load_all_dse_results()
+        dataset_results = [r for r in all_results if r.get('config', {}).get('dataset') == dataset_name]
+        return jsonify({
+            "dataset": dataset_name,
+            "results": dataset_results,
+            "count": len(dataset_results)
+        })
+    except Exception as e:
+        print(f"DSE results for dataset error: {e}")
         return jsonify({"error": str(e)}), 500
 
 

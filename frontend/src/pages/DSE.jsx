@@ -1,13 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
   ScatterChart, Scatter, ZAxis, Cell 
 } from 'recharts';
-import { runDseSweep, getDseStatus, getDseProgress, getDseResults, getDseAllResults, getDseSessions, resetDse } from '../services/api';
+import { runDseSweep, getDseStatus, getDseProgress, getDseResults, getDseAllResults, getDseResultsByDataset, getDseSessions, resetDse } from '../services/api';
+
+const AVAILABLE_DATASETS = ['MNIST', 'FashionMNIST', 'CIFAR10', 'CIFAR100', 'EMNIST'];
 
 function DSE() {
   const navigate = useNavigate();
+  const [selectedDataset, setSelectedDataset] = useState('');
   const [params, setParams] = useState({
     // Key params for sweeping
     learningRate: { min: 0.001, max: 0.1, step: 0.001, value: 0.01 },
@@ -19,6 +22,9 @@ function DSE() {
     networkLatency: { min: 0, max: 200, step: 50, value: 50 },
   });
   const [sweepResults, setSweepResults] = useState([]);
+  const [resultsByDataset, setResultsByDataset] = useState({});
+  const [activeDatasetTab, setActiveDatasetTab] = useState('all');
+  const [viewMode, setViewMode] = useState('all'); // 'all' ou 'filtered'
   const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -89,7 +95,10 @@ function DSE() {
   const loadSessions = async () => {
     try {
       const response = await getDseSessions();
-      const sessionList = response.data.sessions || [];
+      const sessionList = (response.data.sessions || []).map((session, index) => ({
+        ...session,
+        label: `exp ${index + 1}`,
+      }));
       setSessions(sessionList);
       if (!selectedSession && sessionList.length > 0) {
         loadAllSessionResults(sessionList);
@@ -104,6 +113,11 @@ function DSE() {
   };
 
   const handleSweep = async () => {
+    if (!selectedDataset) {
+      setMessage({ type: 'error', text: 'Veuillez sélectionner un dataset avant de lancer le sweep.' });
+      return;
+    }
+
     setLoading(true);
     setMessage({ type: '', text: '' });
     setProgress(0);
@@ -124,7 +138,7 @@ function DSE() {
           xflStrategy: [xflStrategyValue]
         },
         numShortRounds: Number(params.numShortRounds.value),
-        dataset: 'MNIST',
+        dataset: selectedDataset,
         searchStrategy,
         maxConfigs,
       }; 
@@ -152,8 +166,23 @@ function DSE() {
   const loadSessionResults = async (sessionId) => {
     try {
       const response = await getDseResults(sessionId);
-      setSweepResults(response.data.results || []);
+      const results = response.data.results || [];
+      setSweepResults(results);
       setSelectedSession(sessionId);
+      
+      // Group results by dataset for filtering
+      const grouped = {};
+      results.forEach(r => {
+        const dataset = r.config?.dataset || 'Unknown';
+        if (!grouped[dataset]) {
+          grouped[dataset] = [];
+        }
+        grouped[dataset].push(r);
+      });
+      setResultsByDataset(grouped);
+      setActiveDatasetTab('all');
+      setViewMode('all');
+      
       setMessage({ type: 'success', text: `Loaded results from ${sessionId}` });
       if (currentSweepSessionId === sessionId) {
         setCurrentSweepStatus('completed');
@@ -183,8 +212,46 @@ function DSE() {
     }
 
     try {
+      // Try to load results grouped by dataset
+      const response = await getDseResultsByDataset();
+      const resultsByDatasetData = response.data.results_by_dataset || {};
+      setResultsByDataset(resultsByDatasetData);
+      setActiveDatasetTab('all');
+      setViewMode('all');
+      
+      // Flatten results for backwards compatibility
+      const allResults = [];
+      for (const datasetResults of Object.values(resultsByDatasetData)) {
+        allResults.push(...datasetResults);
+      }
+      setSweepResults(allResults);
+      setSelectedSession('all');
+      
+      const numDatasets = response.data.total_datasets || 0;
+      const totalResults = response.data.total_results || allResults.length;
+      setMessage({ type: 'success', text: `Chargé résultats DSE groupés par dataset (${numDatasets} datasets, ${totalResults} configs)` });
+      return;
+    } catch (error) {
+      console.warn('getDseResultsByDataset failed, falling back to all results fetch', error);
+    }
+
+    try {
       const response = await getDseAllResults();
       const allResults = response.data.results || [];
+      
+      // Group results by dataset for filtering
+      const grouped = {};
+      allResults.forEach(r => {
+        const dataset = r.config?.dataset || 'Unknown';
+        if (!grouped[dataset]) {
+          grouped[dataset] = [];
+        }
+        grouped[dataset].push(r);
+      });
+      setResultsByDataset(grouped);
+      setActiveDatasetTab('all');
+      setViewMode('all');
+      
       setSweepResults(allResults);
       setSelectedSession('all');
       setMessage({ type: 'success', text: `Chargé toutes les sessions DSE (${response.data.session_count || targetSessions.length} sessions, ${allResults.length} configs)` });
@@ -203,6 +270,19 @@ function DSE() {
         }
         return acc;
       }, []);
+
+      // Group results by dataset for filtering
+      const grouped = {};
+      allResults.forEach(r => {
+        const dataset = r.config?.dataset || 'Unknown';
+        if (!grouped[dataset]) {
+          grouped[dataset] = [];
+        }
+        grouped[dataset].push(r);
+      });
+      setResultsByDataset(grouped);
+      setActiveDatasetTab('all');
+      setViewMode('all');
 
       setSweepResults(allResults);
       setSelectedSession('all');
@@ -246,35 +326,52 @@ function DSE() {
   };
 
   // Transform results for charts (accuracy vs lr example)
-  const accuracyVsLrData = sweepResults.map(r => ({
+  // Filter results based on view mode
+  let filteredResults;
+  
+  if (viewMode === 'filtered' && activeDatasetTab !== 'all') {
+    // Filtered mode: show only results from selected dataset
+    filteredResults = sweepResults.filter(r => {
+      const resultDataset = r.config?.dataset;
+      return resultDataset === activeDatasetTab;
+    });
+  } else {
+    // All mode: show all results
+    filteredResults = sweepResults;
+  }
+
+  const accuracyVsLrData = filteredResults.map((r, index) => ({
+    experience: `exp ${index + 1}`,
+    session_id: r.session_id || r.sessionId || r.config?.session_id || 'unknown',
     lr: r.config.learningRate,
     accuracy: r.metrics?.final_accuracy || 0,
     loss: r.metrics?.final_loss || 0,
     time: r.metrics?.total_time || 0,
-  })).sort((a, b) => a.lr - b.lr);
+    info: `lr=${r.config.learningRate}, epochs=${r.config.localEpochs}, batch=${r.config.batchSize}`,
+  }));
 
-  const clientsTimeData = sweepResults.map(r => ({
+  const clientsTimeData = filteredResults.map(r => ({
     clientsPerRound: r.config.clientsPerRound || 0,
     time: r.metrics?.total_time || 0,
     accuracy: r.metrics?.final_accuracy || 0,
   }));
 
-  const accuracyVsTimeData = sweepResults.map(r => ({
+  const accuracyVsTimeData = filteredResults.map(r => ({
     time: r.metrics?.total_time || 0,
     accuracy: r.metrics?.final_accuracy || 0,
     label: `lr=${r.config.learningRate}, epochs=${r.config.localEpochs}`,
   }));
 
-  const bestConfig = sweepResults.reduce((best, r) => {
+  const bestConfig = filteredResults.reduce((best, r) => {
     if (!best) return r;
     return (parseFloat(r.metrics?.final_accuracy) || 0) > (parseFloat(best.metrics?.final_accuracy) || 0) ? r : best;
   }, null);
 
-  const topConfigs = [...sweepResults]
+  const topConfigs = [...filteredResults]
     .sort((a, b) => (parseFloat(b.metrics?.final_accuracy) || 0) - (parseFloat(a.metrics?.final_accuracy) || 0))
     .slice(0, 3);
 
-  const bestAccuracyFromResults = sweepResults.reduce((best, r) => {
+  const bestAccuracyFromResults = filteredResults.reduce((best, r) => {
     const accuracy = parseFloat(r.metrics?.final_accuracy) || 0;
     return accuracy > best ? accuracy : best;
   }, 0);
@@ -317,6 +414,29 @@ function DSE() {
               {message.text}
             </div>
           )}
+
+          {/* Dataset Selection - REQUIRED */}
+          <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #db1515', backgroundColor: selectedDataset ? '#2d3348' : '#ffffff' }}>
+            <h2 className="panel-title" style={{color: selectedDataset ? '#ffffff' : '#000000', fontWeight: 'bold'}}>📊 Select Dataset (Required)</h2>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '15px', marginTop: '15px' }}>
+              {AVAILABLE_DATASETS.map((dataset) => (
+                <label key={dataset} style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '10px', borderRadius: '4px', backgroundColor: selectedDataset === dataset ? '#bbdefb' : 'transparent', transition: 'background-color 0.2s' }}>
+                  <input
+                    type="radio"
+                    name="dataset"
+                    value={dataset}
+                    checked={selectedDataset === dataset}
+                    onChange={(e) => setSelectedDataset(e.target.value)}
+                    style={{ marginRight: '10px', cursor: 'pointer' }}
+                  />
+                  <span style={{ fontWeight: selectedDataset === dataset ? 'bold' : 'normal' }}>{dataset}</span>
+                </label>
+              ))}
+            </div>
+            {!selectedDataset && (
+              <div style={{ color: '#d32f2f', marginTop: '10px', fontWeight: 'bold' }}>⚠️ Un dataset doit être sélectionné pour procéder</div>
+            )}
+          </div>
 
           {/* Param Sliders */}
           <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #ff5722' }}>
@@ -378,8 +498,9 @@ function DSE() {
           <button 
               className="btn btn-primary" 
               onClick={handleSweep}
-              disabled={loading}
-              style={{ marginTop: '15px' }}
+              disabled={loading || !selectedDataset}
+              style={{ marginTop: '15px', opacity: !selectedDataset ? 0.5 : 1 }}
+              title={!selectedDataset ? 'Veuillez sélectionner un dataset' : ''}
             >
               {loading ? 'Running Sweep...' : 'Run Design Space Exploration'}
             </button>
@@ -431,7 +552,7 @@ function DSE() {
                     onClick={() => loadSessionResults(session.id)}
                     style={{ background: selectedSession === session.id ? '#4fc3f7' : '#252942' }}
                   >
-                    {session.id} ({session.numConfigs} configs)
+                    {session.label || session.id} ({session.id}) — {session.numConfigs} configs
                   </button>
                 ))}
               </div>
@@ -441,25 +562,111 @@ function DSE() {
           {/* Results Visualization */}
           {sweepResults.length > 0 && (
             <>
+              {/* View Mode Toggle */}
+              <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #ff9800' }}>
+                <h2 className="panel-title">👁️ Affichage des Résultats</h2>
+                <div style={{ display: 'flex', gap: '15px', marginTop: '15px', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={() => setViewMode('all')}
+                    style={{
+                      background: viewMode === 'all' ? '#4fc3f7' : '#252942',
+                      color: '#fff',
+                      border: viewMode === 'all' ? '2px solid #4fc3f7' : '1px solid #555',
+                      padding: '12px 20px',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontWeight: viewMode === 'all' ? 'bold' : 'normal',
+                      fontSize: '14px',
+                      transition: 'all 0.3s'
+                    }}
+                  >
+                    📊 Tous les Résultats
+                  </button>
+                  <button
+                    onClick={() => setViewMode('filtered')}
+                    style={{
+                      background: viewMode === 'filtered' ? '#4fc3f7' : '#252942',
+                      color: '#fff',
+                      border: viewMode === 'filtered' ? '2px solid #4fc3f7' : '1px solid #555',
+                      padding: '12px 20px',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                      fontWeight: viewMode === 'filtered' ? 'bold' : 'normal',
+                      fontSize: '14px',
+                      transition: 'all 0.3s'
+                    }}
+                  >
+                    🔍 Filtrer par Dataset
+                  </button>
+                </div>
+
+                {/* Dataset Selection in Filtered Mode */}
+                {viewMode === 'filtered' && Object.keys(resultsByDataset).length > 0 && (
+                  <div style={{ marginTop: '20px' }}>
+                    <p style={{ color: '#4fc3f7', fontWeight: 'bold', marginBottom: '10px' }}>
+                      📌 Sélectionnez un dataset pour voir ses résultats :
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
+                      {Object.keys(resultsByDataset).map(dataset => (
+                        <button
+                          key={dataset}
+                          onClick={() => setActiveDatasetTab(dataset)}
+                          style={{
+                            background: activeDatasetTab === dataset ? '#1a237e' : '#252942',
+                            color: activeDatasetTab === dataset ? '#4fc3f7' : '#fff',
+                            border: activeDatasetTab === dataset ? '3px solid #4fc3f7' : '1px solid #555',
+                            padding: '15px',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            fontWeight: activeDatasetTab === dataset ? 'bold' : 'normal',
+                            fontSize: '15px',
+                            transition: 'all 0.3s',
+                            boxShadow: activeDatasetTab === dataset ? '0 0 10px rgba(79, 195, 247, 0.3)' : 'none'
+                          }}
+                        >
+                          <div style={{ fontSize: '20px', marginBottom: '5px' }}>📁</div>
+                          {dataset}
+                          <div style={{ fontSize: '12px', marginTop: '5px', opacity: 0.8 }}>
+                            {resultsByDataset[dataset].length} configs
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Info Message */}
+                {viewMode === 'all' && (
+                  <div style={{ marginTop: '15px', padding: '12px', background: '#1d2436', borderLeft: '3px solid #4fc3f7', borderRadius: '4px', color: '#4fc3f7' }}>
+                    ℹ️ Mode "Tous les Résultats": Affichage de toutes les configurations testées (tous les datasets mélangés)
+                  </div>
+                )}
+                {viewMode === 'filtered' && (
+                  <div style={{ marginTop: '15px', padding: '12px', background: '#1d2436', borderLeft: '3px solid #ff9800', borderRadius: '4px', color: '#ff9800' }}>
+                    ℹ️ Mode "Filtrer par Dataset": Affichage des configurations du dataset sélectionné uniquement
+                  </div>
+                )}
+              </div>
+
               <div className="grid-2" style={{ marginBottom: '20px' }}>
                 {/* Accuracy vs Learning Rate */}
                 <div className="card">
-                  <h2 className="panel-title">📈 Accuracy vs Learning Rate</h2>
-                  <ResponsiveContainer width="100%" height={250}>
-                    <LineChart data={accuracyVsLrData}>
+                  <h2 className="panel-title">📈 Accuracy vs Learning Rate {viewMode === 'filtered' && activeDatasetTab !== 'all' && `(${activeDatasetTab})`}</h2>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={accuracyVsLrData} margin={{ top: 20, right: 20, left: 0, bottom: 70 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#2d3348" />
-                      <XAxis dataKey="lr" stroke="#888" />
+                      <XAxis dataKey="experience" stroke="#888" interval={0} tick={{ fontSize: 10, angle: -35, textAnchor: 'end' }} height={70} />
                       <YAxis stroke="#888" />
-                      <Tooltip />
-                      <Line type="monotone" dataKey="accuracy" stroke="#66bb6a" strokeWidth={3} />
-                      <Line type="monotone" dataKey="loss" stroke="#ef5350" strokeWidth={3} />
-                    </LineChart>
+                      <Tooltip formatter={(value, name) => [value, name === 'accuracy' ? 'Accuracy (%)' : 'Loss']} labelFormatter={(label) => `Experience: ${label}`} />
+                      <Bar dataKey="accuracy" fill="#66bb6a" barSize={20} />
+                      <Bar dataKey="loss" fill="#ef5350" barSize={20} />
+                    </BarChart>
                   </ResponsiveContainer>
                 </div>
 
                 {/* Accuracy vs Total Time */}
                 <div className="card">
-                  <h2 className="panel-title">⏱️ Accuracy vs Total Training Time</h2>
+                  <h2 className="panel-title">⏱️ Accuracy vs Total Training Time {viewMode === 'filtered' && activeDatasetTab !== 'all' && `(${activeDatasetTab})`}</h2>
                   <ResponsiveContainer width="100%" height={250}>
                     <ScatterChart>
                       <CartesianGrid strokeDasharray="3 3" stroke="#2d3348" />
@@ -480,15 +687,25 @@ function DSE() {
               {/* Best Configuration Summary */}
               {bestConfig && (
                 <div className="card" style={{ marginBottom: '20px' }}>
-                  <h2 className="panel-title">🏆 Best Configuration</h2>
+                  <h2 className="panel-title">🏆 Best Configuration {viewMode === 'filtered' && activeDatasetTab !== 'all' ? `(${activeDatasetTab})` : ''}</h2>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
+                    {viewMode === 'filtered' && activeDatasetTab !== 'all' && (
+                      <div style={{ gridColumn: '1 / -1', color: '#ff9800', fontSize: '12px', fontStyle: 'italic', backgroundColor: '#1d2436', padding: '8px', borderRadius: '4px' }}>
+                        📌 Affichage filtré pour le dataset: <strong>{activeDatasetTab}</strong>
+                      </div>
+                    )}
+                    {viewMode === 'all' && (
+                      <div style={{ gridColumn: '1 / -1', color: '#4fc3f7', fontSize: '12px', fontStyle: 'italic', backgroundColor: '#1d2436', padding: '8px', borderRadius: '4px' }}>
+                        📊 Affichage pour tous les résultats (tous les datasets confondus)
+                      </div>
+                    )}
                     <div><strong>Learning Rate</strong><br />{bestConfig.config.learningRate}</div>
                     <div><strong>Epochs</strong><br />{bestConfig.config.localEpochs}</div>
                     <div><strong>Batch Size</strong><br />{bestConfig.config.batchSize}</div>
                     <div><strong>Strategy</strong><br />{bestConfig.config.strategy || '-'}</div>
                     <div><strong>XFL variant</strong><br />{bestConfig.config.xflStrategy || '-'}</div>
                     <div><strong>Clients/Round</strong><br />{bestConfig.config.clientsPerRound || '-'}</div>
-                    <div><strong>Accuracy</strong><br />{bestConfig.metrics?.final_accuracy?.toFixed(2) || '-'}</div>
+                    <div><strong>Accuracy</strong><br />{bestConfig.metrics?.final_accuracy?.toFixed(2) || '-'}%</div>
                     <div><strong>Time</strong><br />{bestConfig.metrics?.total_time?.toFixed(1) || '-'} s</div>
                   </div>
                 </div>
@@ -497,7 +714,7 @@ function DSE() {
               {/* Top 3 Configurations */}
               {topConfigs.length > 0 && (
                 <div className="card" style={{ marginBottom: '20px' }}>
-                  <h2 className="panel-title">🔝 Top 3 Configurations</h2>
+                  <h2 className="panel-title">🔝 Top 3 Configurations {viewMode === 'filtered' && activeDatasetTab !== 'all' ? `(${activeDatasetTab})` : ''}</h2>
                   <table>
                     <thead>
                       <tr>
@@ -518,7 +735,7 @@ function DSE() {
                           <td>{r.config.localEpochs}</td>
                           <td>{r.config.batchSize}</td>
                           <td>{r.config.strategy || '-'}</td>
-                          <td>{r.metrics?.final_accuracy?.toFixed(2) || '-'}</td>
+                          <td>{r.metrics?.final_accuracy?.toFixed(2) || '-'}%</td>
                           <td>{r.metrics?.total_time?.toFixed(1) || '-'}</td>
                         </tr>
                       ))}
@@ -529,35 +746,42 @@ function DSE() {
 
               {/* Summary Table */}
               <div className="card">
-                <h2 className="panel-title">📊 Sweep Summary ({sweepResults.length} configs)</h2>
-                <div style={{ overflowX: 'auto' }}>
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>LR</th>
-                        <th>Epochs</th>
-                        <th>Batch</th>
-                        <th>Strategy</th>
-                        <th>Acc (%)</th>
-                        <th>Loss</th>
-                        <th>Time (s)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sweepResults.slice(-10).map((r, i) => (
-                        <tr key={i}>
-                          <td>{r.config.learningRate?.toFixed(3)}</td>
-                          <td>{r.config.localEpochs}</td>
-                          <td>{r.config.batchSize}</td>
-                          <td>{r.config.strategy || '-'}</td>
-                          <td>{r.metrics?.final_accuracy?.toFixed(1) || '-'}</td>
-                          <td>{r.metrics?.final_loss?.toFixed(4) || '-'}</td>
-                          <td>{r.metrics?.total_time?.toFixed(1) || '-'}</td>
+                <h2 className="panel-title">📊 Sweep Summary ({filteredResults.length} configs{viewMode === 'filtered' && activeDatasetTab !== 'all' && `, Dataset: ${activeDatasetTab}`})</h2>
+                {filteredResults.length === 0 ? (
+                  <div style={{ padding: '20px', textAlign: 'center', color: '#ff9800' }}>
+                    <p>⚠️ Aucun résultat trouvé pour {viewMode === 'filtered' && activeDatasetTab !== 'all' ? `le dataset ${activeDatasetTab}` : 'les datasets sélectionnés'}</p>
+                    <p style={{ fontSize: '12px', color: '#888' }}>Assurez-vous d'avoir exécuté le sweep avec ce dataset</p>
+                  </div>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>LR</th>
+                          <th>Epochs</th>
+                          <th>Batch</th>
+                          <th>Strategy</th>
+                          <th>Acc (%)</th>
+                          <th>Loss</th>
+                          <th>Time (s)</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {filteredResults.slice(-10).map((r, i) => (
+                          <tr key={i}>
+                            <td>{r.config.learningRate?.toFixed(3)}</td>
+                            <td>{r.config.localEpochs}</td>
+                            <td>{r.config.batchSize}</td>
+                            <td>{r.config.strategy || '-'}</td>
+                            <td>{r.metrics?.final_accuracy?.toFixed(1) || '-'}%</td>
+                            <td>{r.metrics?.final_loss?.toFixed(4) || '-'}</td>
+                            <td>{r.metrics?.total_time?.toFixed(1) || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </>
           )}

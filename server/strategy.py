@@ -4,9 +4,9 @@ Aggregation strategies for Federated Learning with XFL support
 
 import torch
 from collections import OrderedDict
-from typing import List, Dict, Tuple
-import random
-import copy
+from typing import List, Dict
+
+
 
 
 class FedAvg:
