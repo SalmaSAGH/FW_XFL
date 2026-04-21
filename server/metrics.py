@@ -211,7 +211,6 @@ class ServerMetricsCollector:
                     time.sleep(RETRY_DELAY * (attempt + 1))  # Exponential backoff
                     
             except psycopg2.IntegrityError as e:
-                # Integrity constraint violation - don't retry, it's a persistent error
                 last_exception = e
                 print(f"⚠️  Database integrity error: {e}")
                 
@@ -415,12 +414,63 @@ class ServerMetricsCollector:
     def store_client_metrics(self, round_number: int, client_id: int, client_metrics: Dict[str, Any]):
         """Store metrics from a single client with retry logic"""
         
+        # DEBUG: Log what we're receiving
+        print(f"🔍 DEBUG store_client_metrics: round={round_number}, client={client_id}")
+        print(f"   client_metrics keys: {list(client_metrics.keys())}")
+        
         def _do_store(conn):
             cursor = conn.cursor()
+            
+            # Handle both flat format (from real-hardware clients) and nested format
+            # Flat format: {'training_loss': 0.5, 'latency_ms': 10, 'energy_wh': 0.001, ...}
+            # Nested format: {'training': {'loss': 0.5}, 'network': {'latency_ms': 10}, ...}
+            
+            # Training metrics - check both formats
             training = client_metrics.get('training', {})
+            if not training and 'training_loss' in client_metrics:
+                # Flat format - extract directly from root level
+                training = {
+                    'loss': client_metrics.get('training_loss'),
+                    'accuracy': client_metrics.get('training_accuracy'),
+                    'training_time': client_metrics.get('training_time_sec'),
+                    'num_samples': client_metrics.get('num_samples')
+                }
+                print(f"   Extracted flat training: {training}")
+            
+            # System metrics - check both formats
             system = client_metrics.get('system', {})
-            model = client_metrics.get('model', {})
+            if not system and 'cpu_percent' in client_metrics:
+                # Flat format - extract directly from root level
+                system = {
+                    'process_cpu_percent': client_metrics.get('cpu_percent'),
+                    'process_memory_mb': client_metrics.get('memory_mb')
+                }
+            
+            # Network metrics - check both formats
             network = client_metrics.get('network', {})
+            if not network and 'latency_ms' in client_metrics:
+                # Flat format - extract directly from root level
+                network = {
+                    'bytes_sent': client_metrics.get('bytes_sent', 0),
+                    'bytes_received': client_metrics.get('bytes_received', 0),
+                    'latency_ms': client_metrics.get('latency_ms', 0.0),
+                    'packet_loss_rate': client_metrics.get('packet_loss_rate', 0.0),
+                    'jitter_ms': client_metrics.get('jitter_ms', 0.0)
+                }
+            
+            # Energy metrics - check both formats
+            energy = client_metrics.get('energy', {})
+            if not energy and 'energy_wh' in client_metrics:
+                # Flat format - extract directly from root level
+                energy = {
+                    'energy_joules': client_metrics.get('energy_joules'),
+                    'energy_wh': client_metrics.get('energy_wh'),
+                    'avg_power_watts': client_metrics.get('avg_power_watts')
+                }
+            
+            # Model metrics
+            model = client_metrics.get('model', {})
+            
             cursor.execute("""
                 INSERT INTO client_metrics (round_number, client_id, timestamp, training_loss, training_accuracy,
                  training_time_sec, num_samples, model_size_mb, cpu_percent, memory_mb, bytes_sent, bytes_received,
@@ -431,9 +481,7 @@ class ServerMetricsCollector:
                   training.get('num_samples'), model.get('total_mb'), system.get('process_cpu_percent'),
                   system.get('process_memory_mb'), network.get('bytes_sent', 0), network.get('bytes_received', 0),
                   network.get('latency_ms', 0.0), network.get('packet_loss_rate', 0.0), network.get('jitter_ms', 0.0),
-                  client_metrics.get('energy', {}).get('energy_joules'),
-                  client_metrics.get('energy', {}).get('energy_wh'),
-                  client_metrics.get('energy', {}).get('avg_power_watts'),
+                  energy.get('energy_joules'), energy.get('energy_wh'), energy.get('avg_power_watts'),
                   psycopg2.extras.Json(client_metrics)))
         
         try:
@@ -444,12 +492,64 @@ class ServerMetricsCollector:
 
     def update_client_metrics(self, round_number: int, client_id: int, client_metrics: Dict[str, Any]):
         """Update an existing client metrics row or insert a new one if missing."""
+        
+        # DEBUG: Log what we're receiving
+        print(f"🔍 DEBUG update_client_metrics: round={round_number}, client={client_id}")
+        print(f"   client_metrics keys: {list(client_metrics.keys())}")
+        
         def _do_update(conn):
             cursor = conn.cursor()
+            
+            # Handle both flat format (from real-hardware clients) and nested format
+            # Flat format: {'training_loss': 0.5, 'latency_ms': 10, 'energy_wh': 0.001, ...}
+            # Nested format: {'training': {'loss': 0.5}, 'network': {'latency_ms': 10}, ...}
+            
+            # Training metrics - check both formats
             training = client_metrics.get('training', {})
+            if not training and 'training_loss' in client_metrics:
+                # Flat format - extract directly from root level
+                training = {
+                    'loss': client_metrics.get('training_loss'),
+                    'accuracy': client_metrics.get('training_accuracy'),
+                    'training_time': client_metrics.get('training_time_sec'),
+                    'num_samples': client_metrics.get('num_samples')
+                }
+                print(f"   Extracted flat training: {training}")
+            
+            # System metrics - check both formats
             system = client_metrics.get('system', {})
-            model = client_metrics.get('model', {})
+            if not system and 'cpu_percent' in client_metrics:
+                # Flat format - extract directly from root level
+                system = {
+                    'process_cpu_percent': client_metrics.get('cpu_percent'),
+                    'process_memory_mb': client_metrics.get('memory_mb')
+                }
+            
+            # Network metrics - check both formats
             network = client_metrics.get('network', {})
+            if not network and 'latency_ms' in client_metrics:
+                # Flat format - extract directly from root level
+                network = {
+                    'bytes_sent': client_metrics.get('bytes_sent', 0),
+                    'bytes_received': client_metrics.get('bytes_received', 0),
+                    'latency_ms': client_metrics.get('latency_ms', 0.0),
+                    'packet_loss_rate': client_metrics.get('packet_loss_rate', 0.0),
+                    'jitter_ms': client_metrics.get('jitter_ms', 0.0)
+                }
+            
+            # Energy metrics - check both formats
+            energy = client_metrics.get('energy', {})
+            if not energy and 'energy_wh' in client_metrics:
+                # Flat format - extract directly from root level
+                energy = {
+                    'energy_joules': client_metrics.get('energy_joules'),
+                    'energy_wh': client_metrics.get('energy_wh'),
+                    'avg_power_watts': client_metrics.get('avg_power_watts')
+                }
+            
+            # Model metrics
+            model = client_metrics.get('model', {})
+            
             cursor.execute("""
                 UPDATE client_metrics
                 SET timestamp = %s,
@@ -484,9 +584,9 @@ class ServerMetricsCollector:
                 network.get('latency_ms', 0.0),
                 network.get('packet_loss_rate', 0.0),
                 network.get('jitter_ms', 0.0),
-                client_metrics.get('energy', {}).get('energy_joules'),
-                client_metrics.get('energy', {}).get('energy_wh'),
-                client_metrics.get('energy', {}).get('avg_power_watts'),
+                energy.get('energy_joules'),
+                energy.get('energy_wh'),
+                energy.get('avg_power_watts'),
                 psycopg2.extras.Json(client_metrics),
                 round_number,
                 client_id
@@ -502,9 +602,7 @@ class ServerMetricsCollector:
                       training.get('num_samples'), model.get('total_mb'), system.get('process_cpu_percent'),
                       system.get('process_memory_mb'), network.get('bytes_sent', 0), network.get('bytes_received', 0),
                       network.get('latency_ms', 0.0), network.get('packet_loss_rate', 0.0), network.get('jitter_ms', 0.0),
-                      client_metrics.get('energy', {}).get('energy_joules'),
-                      client_metrics.get('energy', {}).get('energy_wh'),
-                      client_metrics.get('energy', {}).get('avg_power_watts'),
+                      energy.get('energy_joules'), energy.get('energy_wh'), energy.get('avg_power_watts'),
                       psycopg2.extras.Json(client_metrics)))
 
         try:

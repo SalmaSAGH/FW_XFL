@@ -1,0 +1,11 @@
+batchSize: 128
+clientsPerRound: 5
+dataset: FashionMNIST
+learningRate: 0.001
+localEpochs: 1
+networkLatency: 50
+numRounds: 2
+numShortRounds: 2
+strategy: fedavg
+xflParam: 2
+xflStrategy: xfl_cyclic

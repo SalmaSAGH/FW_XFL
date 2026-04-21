@@ -1,0 +1,11 @@
+batchSize: 128
+clientsPerRound: 4
+dataset: FashionMNIST
+learningRate: 0.005
+localEpochs: 1
+networkLatency: 50
+numRounds: 2
+numShortRounds: 2
+strategy: xfl
+xflParam: 2
+xflStrategy: xfl_sparsification

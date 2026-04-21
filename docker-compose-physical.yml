@@ -1,0 +1,116 @@
+# ============================================================================
+# Docker Compose for Physical Raspberry Pi Clients Only
+# ============================================================================
+# This configuration runs ONLY the server and dashboard (no Docker clients)
+# The Raspberry Pi clients connect externally via WiFi
+# ============================================================================
+
+services:
+  postgres:
+    image: postgres:13
+    container_name: xfl-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: newpassword
+      POSTGRES_DB: xfl_metrics
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    command: >
+      postgres
+      -c synchronous_commit=on
+      -c fsync=on
+      -c full_page_writes=on
+      -c wal_level=replica
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - fl-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2048M
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    container_name: xfl-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - dashboard
+    networks:
+      - fl-network
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  server:
+    image: xfl-rpilab-client:latest
+    container_name: xfl-server
+    command: python -m server.run_server_standalone
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+      - ./results:/app/results
+      - ./server:/app/server
+      - ./client:/app/client
+      - ./config:/app/config
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NUM_CLIENTS=1
+      - USE_PHYSICAL_CLIENTS=true
+      - PHYSICAL_CLIENT_IPS=192.168.100.41
+      - DATABASE_URL=postgresql://postgres:newpassword@postgres:5432/xfl_metrics
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - fl-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4096M
+
+  dashboard:
+    image: xfl-rpilab-client:latest
+    container_name: xfl-dashboard
+    command: python -m dashboard.run_dashboard_standalone
+    ports:
+      - "5001:5001"
+    volumes:
+      - ./logs:/app/logs
+      - ./dashboard:/app/dashboard
+    environment:
+      - PYTHONUNBUFFERED=1
+      - NUM_CLIENTS=1
+      - DATABASE_URL=postgresql://postgres:newpassword@postgres:5432/xfl_metrics
+    depends_on:
+      - server
+    networks:
+      - fl-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+# No client-* services - they run on Raspberry Pi instead
+
+networks:
+  fl-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

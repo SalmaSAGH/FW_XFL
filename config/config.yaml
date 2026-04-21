@@ -13,8 +13,8 @@ experiment:
 
 federated_learning:
   num_rounds: 100
-  num_clients: 10
-  clients_per_round: 7
+  num_clients: 1
+  clients_per_round: 1
   local_epochs: 1
 
 dataset:

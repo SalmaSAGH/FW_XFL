@@ -55,14 +55,14 @@ class ExperimentOrchestrator:
         print("="*70)
         
         # Create model
-        print(f"\n📊 Creating model: {self.config.model.name}")
+        print(f"\n Creating model: {self.config.model.name}")
         self.global_model = create_model(
             model_name=self.config.model.name,
             num_classes=self.config.model.num_classes
         )
         
         # Create data loaders
-        print(f"\n📊 Creating data loaders for {self.config.dataset.name}...")
+        print(f"\n Creating data loaders for {self.config.dataset.name}...")
         self.client_loaders, self.test_loader = create_dataloaders(
             dataset_name=self.config.dataset.name,
             num_clients=self.config.federated_learning.num_clients,
@@ -246,10 +246,10 @@ class ExperimentOrchestrator:
                 success = self.run_round(round_num)
                 
                 round_time = time.time() - round_start
-                print(f"\n⏱️  Round {round_num} completed in {round_time:.2f}s")
+                print(f"\n Round {round_num} completed in {round_time:.2f}s")
                 
                 if not success:
-                    print(f"❌ Round {round_num} failed")
+                    print(f" Round {round_num} failed")
                     break
                 
                 # Short pause between rounds

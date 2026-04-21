@@ -43,7 +43,9 @@ class FLClient:
         num_clients: int = 40,
         batch_size: int = 32,
         distribution: str = "iid",
-        data_dir: str = "./data"
+        data_dir: str = "./data",
+        use_real_hardware_metrics: bool = False,
+        real_metrics_collector = None
     ):
         self.client_id = client_id
         self.model = model
@@ -56,6 +58,10 @@ class FLClient:
 
         self.sparsification_threshold = sparsification_threshold
         self.quantization_bits = quantization_bits
+
+        # Real hardware metrics collector (for Raspberry Pi)
+        self.use_real_hardware_metrics = use_real_hardware_metrics
+        self.real_metrics_collector = real_metrics_collector
 
         self.dataset_name = dataset_name
         self.num_clients = num_clients
@@ -193,6 +199,9 @@ class FLClient:
 
     def participate_in_round(self, verbose: bool = False) -> bool:
         try:
+            # NOTE: reset_round_metrics() is now called in run_client_raspberry_pi.py
+            # before this function is called - don't call it here to avoid double-reset
+            
             # Step 1: Get global model
             response = requests.get(
                 f"{self.server_url}/api/get_global_model", timeout=10
@@ -320,21 +329,51 @@ class FLClient:
             result = response.json()
 
             # NOW collect REAL metrics after successful transmission
-            network_metrics = self.metrics_collector.get_network_metrics(
-                bytes_sent=model_size_bytes,
-                bytes_received=model_size_bytes,
-                transmission_time=tx_time
-            )
-            network_metrics.update({
-                "http_status": response.status_code,
-                "is_real_measurement": True
-            })
+            # Use real hardware metrics if available (Raspberry Pi), otherwise use simulated
+            if self.use_real_hardware_metrics and self.real_metrics_collector is not None:
+                # Get real hardware metrics from Raspberry Pi
+                real_summary = self.real_metrics_collector.get_summary()
+                
+                # Build real metrics dict
+                full_metrics = {
+                    'training_loss': training_metrics.get('loss', 0),
+                    'training_accuracy': training_metrics.get('accuracy', 0),
+                    'training_time_sec': train_time,
+                    'num_samples': num_samples,
+                    # Real network metrics
+                    'latency_ms': tx_latency_ms,
+                    'transmission_time_sec': tx_time,
+                    'bytes_sent': model_size_bytes,
+                    'bytes_received': model_size_bytes,
+                    # Real hardware metrics from Raspberry Pi
+                    'cpu_percent': real_summary.get('cpu', {}).get('avg_percent', 0),
+                    'memory_mb': real_summary.get('memory', {}).get('avg_mb', 0),
+                    'temperature_celsius': real_summary.get('temperature', {}).get('avg_celsius'),
+                    'energy_wh': real_summary.get('energy', {}).get('total_wh', 0),
+                    # Network quality metrics (estimated from real measurements)
+                    'jitter_ms': real_summary.get('network', {}).get('avg_jitter_ms', 0),
+                    'packet_loss_rate': real_summary.get('network', {}).get('packet_loss_rate', 0),
+                    'is_real_measurement': True
+                }
+            else:
+                # Use simulated metrics (default behavior)
+                network_metrics = self.metrics_collector.get_network_metrics(
+                    bytes_sent=model_size_bytes,
+                    bytes_received=model_size_bytes,
+                    transmission_time=tx_time
+                )
+                network_metrics.update({
+                    "http_status": response.status_code,
+                    "is_real_measurement": True
+                })
 
-            full_metrics = self.metrics_collector.collect_full_metrics(
-                training_metrics=training_metrics,
-                model_weights=weights_to_send,
-                network_metrics=network_metrics
-            )
+                full_metrics = self.metrics_collector.collect_full_metrics(
+                    training_metrics=training_metrics,
+                    model_weights=weights_to_send,
+                    network_metrics=network_metrics,
+                    transmission_time=tx_time,
+                    model_size_bytes=model_size_bytes
+                )
 
             # Store the REAL complete metrics to DB via server
             payload_with_metrics = {
@@ -349,14 +388,46 @@ class FLClient:
                 delattr(self, '_quantization_meta')
 
             # Send FINAL payload with REAL metrics to server
-            final_response = requests.post(
-                f"{self.server_url}/api/submit_update",
-                json=payload_with_metrics,
-                timeout=30
-            )
+            # Use longer timeout for real-hardware mode over WiFi
+            send_timeout = 120 if self.use_real_hardware_metrics else 30
+            print(f"🔍 DEBUG: Sending FINAL metrics to server with {len(full_metrics)} keys")
+            print(f"   Keys: {list(full_metrics.keys())}")
+            print(f"   Using timeout: {send_timeout}s (real_hardware={self.use_real_hardware_metrics})")
+            
+            # Retry logic for unreliable WiFi connections
+            max_retries = 3
+            retry_delay = 5
+            final_response = None
+            last_error = None
+            
+            for attempt in range(max_retries):
+                try:
+                    final_response = requests.post(
+                        f"{self.server_url}/api/submit_update",
+                        json=payload_with_metrics,
+                        timeout=send_timeout
+                    )
+                    break  # Success, exit retry loop
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        print(f"   ⚠️ Attempt {attempt + 1}/{max_retries} failed: {e}")
+                        print(f"   ⏳ Retrying in {retry_delay}s...")
+                        time.sleep(retry_delay)
+                    else:
+                        print(f"   ❌ All {max_retries} attempts failed")
 
+            # Handle case where all retries failed
+            if final_response is None:
+                print(f"Client {self.client_id}: ❌ Failed to send metrics after {max_retries} attempts")
+                print(f"   Last error: {last_error}")
+                self._cleanup_memory()
+                return False
+
+            print(f"🔍 DEBUG: Final response status={final_response.status_code}")
             if final_response.status_code == 200:
                 result = final_response.json()
+                print(f"   Response: {result}")
                 if verbose:
                     print(f"Client {self.client_id}: ✅ Final metrics sent | "
                           f"{result.get('submissions')} total submissions")

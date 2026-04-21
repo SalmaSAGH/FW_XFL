@@ -1,0 +1,23 @@
+[
+  {
+    "config_id": "c999b9fd",
+    "config": {
+      "learningRate": 0.001,
+      "localEpochs": 1,
+      "numShortRounds": 2,
+      "batchSize": 128,
+      "clientsPerRound": 5,
+      "xflParam": 2,
+      "networkLatency": 50,
+      "strategy": "fedavg",
+      "xflStrategy": "xfl_cyclic",
+      "dataset": "FashionMNIST",
+      "numRounds": 2
+    },
+    "metrics": {
+      "final_accuracy": 67.88,
+      "final_loss": 0.939,
+      "total_time": 119.6
+    }
+  }
+]

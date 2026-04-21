@@ -1,5 +1,5 @@
-# Dockerfile for XFL-RPiLab Client
-FROM python:3.12-alpine
+# Dockerfile for XFL-RPiLab Server
+FROM python:3.12-slim
 
 # Set working directory
 WORKDIR /app
@@ -10,21 +10,23 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
+# Install build dependencies for numpy
+RUN pip install --no-cache-dir setuptools wheel
+
 # Copy requirements
-COPY requirements.txt .
+COPY requirements_server.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements_server.txt
 
-# Copy client code
-COPY client/ ./client/
+# Copy server code
 COPY server/ ./server/
 COPY dashboard/ ./dashboard/
 COPY config/ ./config/
 
 
 # Create data and logs directories
-RUN mkdir -p /app/data /app/logs
+RUN mkdir -p /app/data /app/logs /app/results
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
@@ -34,5 +36,5 @@ ENV PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 ENV OMP_NUM_THREADS=1
 ENV MKL_NUM_THREADS=1
 
-# Default command (will be overridden by docker-compose)
-CMD ["python", "-m", "client.run_client_standalone"]
+# Default command
+CMD ["python", "-m", "server.run_server_standalone"]

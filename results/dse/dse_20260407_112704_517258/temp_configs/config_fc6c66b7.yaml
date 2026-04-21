@@ -1,0 +1,11 @@
+batchSize: 128
+clientsPerRound: 5
+dataset: MNIST
+learningRate: 0.001
+localEpochs: 1
+networkLatency: 50
+numRounds: 3
+numShortRounds: 3
+strategy: xfl
+xflParam: 2
+xflStrategy: xfl_cyclic

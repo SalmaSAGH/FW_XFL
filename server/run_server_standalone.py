@@ -86,10 +86,13 @@ def _get_model_and_loader(dataset_name: str, distribution: str = 'iid',
         input_size=input_size
     )
 
-    # Charge uniquement le test_loader (5 clients fictifs, seul le test set compte)
+    # Get num_clients from config or environment (default 5 for Docker, 1 for physical)
+    num_clients = int(os.getenv('NUM_CLIENTS', '5'))
+    
+    # Charge le test_loader (utilise num_clients pour la partition)
     _, test_loader = create_dataloaders(
         dataset_name=dataset_name,
-        num_clients=5,
+        num_clients=num_clients,
         batch_size=256,
         distribution=distribution,
         data_dir=data_dir,
@@ -169,6 +172,20 @@ def main():
         clients_per_round=num_clients,
         db_url=db_url
     )
+    
+    # ── Initialize physical client manager and routes ───────────────────────
+    # This allows the server to detect and use registered Raspberry Pi clients
+    try:
+        from server.physical_client_manager import create_physical_client_manager
+        physical_mgr = create_physical_client_manager("http://localhost:5000")
+        print("✅ Physical client manager initialized")
+        
+        # Register physical client routes directly with Flask app
+        from server.server import init_physical_client_routes
+        init_physical_client_routes(physical_mgr)
+        print("✅ Physical client routes registered")
+    except Exception as e:
+        print(f"⚠️ Could not initialize physical client manager: {e}")
 
     # ── Monkey-patch /api/config/save ────────────────────────────────────────
     # Déclenche reload_server_model_and_data en arrière-plan si le dataset change.

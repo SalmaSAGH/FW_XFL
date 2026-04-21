@@ -1,0 +1,11 @@
+batchSize: 160
+clientsPerRound: 2
+dataset: CIFAR10
+learningRate: 0.001
+localEpochs: 1
+networkLatency: 50
+numRounds: 1
+numShortRounds: 1
+strategy: fedavg
+xflParam: 2
+xflStrategy: xfl_cyclic

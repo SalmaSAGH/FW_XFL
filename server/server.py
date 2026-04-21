@@ -563,9 +563,28 @@ class FLServer:
                 print(f"WARNING:  Warning: Could not save round metrics placeholder: {e}")
 
             import random
-            total_clients = int(fl_config.get('numClients', 40))
-            actual_clients_per_round = min(self.clients_per_round, total_clients)
-            self.selected_clients = random.sample(range(total_clients), actual_clients_per_round)
+            
+            # ── FIX: Use registered physical clients if available ─────────────
+            # Check if physical clients are registered
+            physical_client_ids = []
+            try:
+                from .physical_client_manager import physical_client_manager
+                if physical_client_manager and physical_client_manager.clients:
+                    physical_client_ids = list(physical_client_manager.clients.keys())
+                    print(f"   📡 Using {len(physical_client_ids)} registered physical clients: {physical_client_ids}")
+            except Exception as e:
+                print(f"   ⚠️ Could not get physical clients: {e}")
+            
+            if physical_client_ids:
+                # Use registered physical clients
+                total_clients = len(physical_client_ids)
+                actual_clients_per_round = min(self.clients_per_round, total_clients)
+                self.selected_clients = random.sample(physical_client_ids, actual_clients_per_round)
+            else:
+                # Fallback to NUM_CLIENTS config
+                total_clients = int(fl_config.get('numClients', 40))
+                actual_clients_per_round = min(self.clients_per_round, total_clients)
+                self.selected_clients = random.sample(range(total_clients), actual_clients_per_round)
 
             xfl_info = self.aggregation_strategy.get_xfl_info()
             print(f"\n🔄 Starting Round {self.current_round}/{self.num_rounds}")
@@ -599,39 +618,47 @@ class FLServer:
                     "message": "No round in progress"
                 }
 
-            existing_submission = next(
-                (sub for sub in self.client_submissions if sub["client_id"] == client_id),
+            # Check if this is a placeholder submission (empty metrics) or real metrics
+            has_real_metrics = bool(client_metrics and len(client_metrics) > 0)
+            
+            # Find if client already submitted (placeholder)
+            existing_idx = next(
+                (i for i, sub in enumerate(self.client_submissions) if sub["client_id"] == client_id),
                 None
             )
-            if existing_submission is not None:
-                # Allow the second final metrics submission to update stored client metrics
-                if client_metrics:
-                    try:
-                        self.metrics_collector.update_client_metrics(
-                            self.current_round,
-                            client_id,
-                            client_metrics
-                        )
-                        existing_submission["metrics"] = client_metrics
-                        return {
-                            "status": "updated",
-                            "message": f"Client {client_id} metrics updated for round {self.current_round}",
-                            "round": self.current_round,
-                            "submissions": len(self.client_submissions)
-                        }
-                    except Exception as e:
-                        print(f"WARNING: Failed to update duplicate client metrics: {e}")
-                        return {
-                            "status": "duplicate",
-                            "message": f"Client {client_id} has already submitted for this round"
-                        }
+            
+            if existing_idx is not None:
+                # Update existing submission with real metrics
+                self.client_submissions[existing_idx]["metrics"] = client_metrics
+                self.client_submissions[existing_idx]["weights"] = model_weights
+                self.client_submissions[existing_idx]["num_samples"] = num_samples
+                
+                # Store/update metrics in DB
+                self.metrics_collector.store_client_metrics(
+                    self.current_round,
+                    client_id,
+                    client_metrics
+                )
+                
+                print(f"   ✅ Client {client_id} updated with REAL metrics "
+                      f"({len(self.client_submissions)}/{self.clients_per_round})")
+                
+                # Now check if we can aggregate (all clients have real metrics)
+                # Only aggregate when we have real metrics from all expected clients
+                ready_clients = sum(
+                    1 for sub in self.client_submissions 
+                    if sub["metrics"] and len(sub["metrics"]) > 0
+                )
+                if ready_clients >= self.clients_per_round:
+                    self._aggregate_round()
+                
                 return {
-                    "status": "duplicate",
-                    "message": f"Client {client_id} has already submitted for this round",
+                    "status": "updated",
                     "round": self.current_round,
                     "submissions": len(self.client_submissions)
                 }
-
+            
+            # New submission
             self.client_submissions.append({
                 "client_id": client_id,
                 "weights": model_weights,
@@ -640,17 +667,30 @@ class FLServer:
                 "quantization_meta": quantization_meta
             })
 
-            self.metrics_collector.store_client_metrics(
-                self.current_round,
-                client_id,
-                client_metrics
-            )
+            # Only store metrics in DB if we have REAL metrics (not placeholder)
+            # This prevents double-insertion which causes incorrect AVG() in charts
+            if has_real_metrics:
+                self.metrics_collector.store_client_metrics(
+                    self.current_round,
+                    client_id,
+                    client_metrics
+                )
+                print(f"   💾 Stored REAL metrics in DB for client {client_id}")
+            else:
+                print(f"   ⏳ Waiting for real metrics from client {client_id}")
 
             print(f"   Received update from Client {client_id} "
-                  f"({len(self.client_submissions)}/{self.clients_per_round})")
+                  f"({len(self.client_submissions)}/{self.clients_per_round}) "
+                  f"{'(REAL METRICS)' if has_real_metrics else '(placeholder)'}")
 
-            if len(self.client_submissions) >= self.clients_per_round:
-                self._aggregate_round()
+            # Only aggregate if we have REAL metrics from all expected clients
+            if has_real_metrics:
+                ready_clients = sum(
+                    1 for sub in self.client_submissions 
+                    if sub["metrics"] and len(sub["metrics"]) > 0
+                )
+                if ready_clients >= self.clients_per_round:
+                    self._aggregate_round()
 
             return {
                 "status": "received",
@@ -1152,6 +1192,14 @@ def submit_update():
     client_metrics = data.get('metrics', {})
     quantization_meta = data.get('quantization_meta')
 
+    # DEBUG: Log received metrics
+    print(f"🔍 DEBUG: Received submit_update from client {client_id}")
+    print(f"   metrics keys: {list(client_metrics.keys()) if client_metrics else 'EMPTY'}")
+    if client_metrics:
+        print(f"   latency_ms: {client_metrics.get('latency_ms')}")
+        print(f"   energy_wh: {client_metrics.get('energy_wh')}")
+        print(f"   bytes_sent: {client_metrics.get('bytes_sent')}")
+
     if client_id is None or weights_b64 is None or num_samples is None:
         return jsonify({"error": "Missing required fields"}), 400
     # Décodage des poids
@@ -1380,21 +1428,21 @@ def get_bandwidth_data():
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
 
+        # Return bandwidth per round (matching frontend expectations)
         cursor.execute("""
-            SELECT client_id, AVG(bytes_sent) / 1048576.0 as avg_mb
+            SELECT round_number, AVG(bytes_sent) / 1048576.0 as avg_mb
             FROM client_metrics
-            GROUP BY client_id
-            ORDER BY client_id
-            LIMIT 10
+            GROUP BY round_number
+            ORDER BY round_number
         """)
 
         data = cursor.fetchall()
         conn.close()
 
-        labels = [f"Pi {str(row[0]).zfill(2)}" for row in data]
-        values = [round(row[1], 2) if row[1] else 0 for row in data]
+        rounds = [row[0] for row in data]
+        bandwidth_mb = [round(row[1], 2) if row[1] else 0 for row in data]
 
-        return jsonify({"labels": labels, "values": values})
+        return jsonify({"rounds": rounds, "bandwidth_mb": bandwidth_mb})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1909,6 +1957,86 @@ def create_server(
         print(f"WARNING:  Warning: Could not load config: {e}")
     
     return fl_server
+
+
+# ── Physical Client Routes (added directly to avoid blueprint issues) ───────
+_physical_client_manager = None
+
+
+def init_physical_client_routes(physical_manager):
+    """Initialize physical client routes"""
+    global _physical_client_manager
+    _physical_client_manager = physical_manager
+    print("✅ Physical client routes initialized")
+
+
+@app.route('/api/physical/register', methods=['POST'])
+def register_physical_client():
+    """Register a new physical Raspberry Pi client"""
+    try:
+        data = request.get_json()
+        print(f"DEBUG: Received registration request: {data}")
+        
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+            
+        client_id = data.get('client_id')
+        ip_address = data.get('ip_address')
+        hostname = data.get('hostname', '')
+        username = data.get('username', 'pi')
+        
+        print(f"DEBUG: client_id={client_id}, ip_address={ip_address}")
+        
+        if client_id is None or not ip_address:
+            return jsonify({'error': 'client_id and ip_address required'}), 400
+        
+        if _physical_client_manager:
+            print(f"DEBUG: Calling register_client with client_id={client_id}")
+            try:
+                success = _physical_client_manager.register_client(
+                    client_id=client_id,
+                    ip_address=ip_address,
+                    hostname=hostname,
+                    username=username
+                )
+                print(f"DEBUG: register_client returned {success}")
+                if success:
+                    return jsonify({
+                        'status': 'registered',
+                        'client_id': client_id,
+                        'ip_address': ip_address
+                    }), 200
+            except Exception as e:
+                print(f"DEBUG: register_client exception: {e}")
+                return jsonify({'error': f'Registration error: {str(e)}'}), 500
+        
+        return jsonify({'error': 'Registration failed - no physical manager'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/physical/clients', methods=['GET'])
+def get_physical_clients():
+    """Get all registered physical clients"""
+    try:
+        if _physical_client_manager:
+            clients = _physical_client_manager.get_all_clients()
+            return jsonify({'clients': clients, 'count': len(clients)}), 200
+        return jsonify({'clients': [], 'count': 0}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/physical/<int:client_id>/metrics', methods=['POST'])
+def receive_physical_metrics(client_id):
+    """Receive metrics from a physical client"""
+    try:
+        metrics = request.get_json()
+        if _physical_client_manager:
+            _physical_client_manager.update_client_metrics(client_id, metrics)
+        return jsonify({'status': 'metrics_received'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 def run_server(host: str = "localhost", port: int = 5000, debug: bool = False):

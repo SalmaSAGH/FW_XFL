@@ -1,0 +1,23 @@
+[
+  {
+    "config_id": "a2530748",
+    "config": {
+      "learningRate": 0.001,
+      "localEpochs": 1,
+      "numShortRounds": 1,
+      "batchSize": 160,
+      "clientsPerRound": 2,
+      "xflParam": 2,
+      "networkLatency": 50,
+      "strategy": "fedavg",
+      "xflStrategy": "xfl_cyclic",
+      "dataset": "CIFAR10",
+      "numRounds": 1
+    },
+    "metrics": {
+      "final_accuracy": 23.97,
+      "final_loss": 2.1623,
+      "total_time": 170.5
+    }
+  }
+]

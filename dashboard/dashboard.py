@@ -94,7 +94,7 @@ class DashboardServer:
         @self.app.route('/api/status')
         def get_status():
             try:
-                # ── FIX: get numClients from server config, not hardcoded env ──
+                
                 num_clients = self._get_num_clients_from_server()
 
                 expected_clients = None
@@ -380,11 +380,12 @@ class DashboardServer:
                 cursor = conn.cursor()
                 session_id = self._get_active_session_id()
                 if session_id:
+                    # FIX: Show metrics for all rounds with client submissions, not just evaluated rounds
                     cursor.execute("""
                         SELECT cm.round_number, AVG(cm.bytes_sent / 1048576.0) as avg_bw_mb
                         FROM client_metrics cm 
                         INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
-                        WHERE rm.session_id = %s AND rm.global_test_accuracy IS NOT NULL
+                        WHERE rm.session_id = %s
                         GROUP BY cm.round_number 
                         ORDER BY cm.round_number
                     """, (session_id,))
@@ -411,11 +412,12 @@ class DashboardServer:
                 cursor = conn.cursor()
                 session_id = self._get_active_session_id()
                 if session_id:
+                    # FIX: Show metrics for all rounds with client submissions
                     cursor.execute("""
                         SELECT cm.round_number, AVG(cm.latency_ms)
                         FROM client_metrics cm 
                         INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
-                        WHERE rm.session_id = %s AND rm.global_test_accuracy IS NOT NULL
+                        WHERE rm.session_id = %s
                         GROUP BY cm.round_number 
                         ORDER BY cm.round_number
                     """, (session_id,))
@@ -437,11 +439,12 @@ class DashboardServer:
                 cursor = conn.cursor()
                 session_id = self._get_active_session_id()
                 if session_id:
+                    # FIX: Show metrics for all rounds with client submissions
                     cursor.execute("""
                         SELECT cm.round_number, AVG(cm.energy_wh)
                         FROM client_metrics cm 
                         INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
-                        WHERE rm.session_id = %s AND rm.global_test_accuracy IS NOT NULL
+                        WHERE rm.session_id = %s
                         GROUP BY cm.round_number 
                         ORDER BY cm.round_number
                     """, (session_id,))
@@ -463,13 +466,14 @@ class DashboardServer:
                 cursor = conn.cursor()
                 session_id = self._get_active_session_id()
                 if session_id:
+                    # FIX: Show metrics for all rounds with client submissions
                     cursor.execute("""
                         SELECT cm.round_number,
                                COALESCE(AVG(cm.packet_loss_rate), 0.0) as avg_packet_loss,
                                COALESCE(AVG(cm.jitter_ms), 0.0) as avg_jitter
                         FROM client_metrics cm 
                         INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
-                        WHERE rm.session_id = %s AND rm.global_test_accuracy IS NOT NULL
+                        WHERE rm.session_id = %s
                         GROUP BY cm.round_number 
                         ORDER BY cm.round_number
                     """, (session_id,))
