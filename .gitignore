@@ -8,6 +8,7 @@ env/
 venv/
 ENV/
 build/
+data/
 develop-eggs/
 dist/
 downloads/
@@ -57,7 +58,6 @@ Thumbs.db
 # Docker
 .dockerignore
 
-data/
 # Experiments Results
 experiments/results/
 experiments/plots/
