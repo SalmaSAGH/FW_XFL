@@ -134,17 +134,25 @@ def reload_server_model_and_data(dataset_name: str, distribution: str = 'iid',
 
 
 def main():
-    if not wait_for_postgres():
+    # Determine database URL and extract host for PostgreSQL connection check
+    db_url = (os.getenv('DB_URL') or
+              os.getenv('DATABASE_URL',
+                        'postgresql://postgres:newpassword@localhost:5432/xfl_metrics'))
+
+    # Extract host from database URL for PostgreSQL connection check
+    from urllib.parse import urlparse
+    parsed_url = urlparse(db_url)
+    postgres_host = parsed_url.hostname or 'localhost'
+
+    print(f"⏳ Waiting for PostgreSQL at {postgres_host}:5432...")
+    if not wait_for_postgres(host=postgres_host):
         print("❌ Cannot connect to PostgreSQL, exiting...")
         sys.exit(1)
 
     num_clients = int(os.getenv('NUM_CLIENTS', '5'))
-    db_url = (os.getenv('DB_URL') or
-              os.getenv('DATABASE_URL',
-                        'postgresql://postgres:newpassword@postgres:5432/xfl_metrics'))
 
     print("=" * 70)
-    print("XFL-RPiLab FL Server (Docker)")
+    print("XFL-RPiLab FL Server")
     print("=" * 70)
     print(f"Starting server on 0.0.0.0:5000")
     print(f"Expected clients : {num_clients}")

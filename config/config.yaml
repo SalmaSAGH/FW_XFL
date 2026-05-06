@@ -39,7 +39,7 @@ strategy:
   num_layers: null
 
 network:
-  simulate_constraints: true
+  simulate_constraints: false
   latency_ms: 50
   latency_std_ms: 10
   bandwidth_mbps: 10

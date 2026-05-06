@@ -188,12 +188,13 @@ class PhysicalClientManager:
                 for c in self.clients.values()
             ]
     
-    def get_active_clients(self) -> List[int]:
+    def get_active_clients(self, timeout_seconds: int = 60) -> List[int]:
         """Get list of active client IDs"""
+        cutoff = time.time() - timeout_seconds
         with self._lock:
             return [
                 c.client_id for c in self.clients.values()
-                if c.status in ('connected', 'training')
+                if c.status in ('connected', 'training') and c.last_seen >= cutoff
             ]
     
     def start_monitoring(self, interval: int = 30):

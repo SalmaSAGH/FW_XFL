@@ -522,12 +522,22 @@ class RealHardwareMetricsCollector:
         net_values = list(self.network_history)
         
         if net_values:
-            avg_bytes_sent = sum(h.get('bytes_sent', 0) for h in net_values) / len(net_values)
-            avg_bytes_received = sum(h.get('bytes_received', 0) for h in net_values) / len(net_values)
+            # Network metrics are nested under 'network' key - extract properly
+            def get_net_value(h, key, default=0):
+                return h.get('network', {}).get(key, default) if isinstance(h, dict) else default
             
-            # Packet loss from dropin/errin history (direct fields, not nested)
-            total_packets = sum(h.get('packets_sent', 0) + h.get('packets_received', 0) for h in net_values)
-            total_drops = sum(h.get('dropin', 0) + h.get('errin', 0) for h in net_values)
+            avg_bytes_sent = sum(get_net_value(h, 'bytes_sent', 0) for h in net_values) / len(net_values)
+            avg_bytes_received = sum(get_net_value(h, 'bytes_received', 0) for h in net_values) / len(net_values)
+            
+            # Packet loss from dropin/errin history (nested under 'network' key)
+            total_packets = sum(
+                get_net_value(h, 'packets_sent', 0) + get_net_value(h, 'packets_received', 0) 
+                for h in net_values
+            )
+            total_drops = sum(
+                get_net_value(h, 'dropin', 0) + get_net_value(h, 'errin', 0) 
+                for h in net_values
+            )
             packet_loss_rate = total_drops / max(total_packets, 1)
         else:
             # No network data collected yet - use realistic defaults

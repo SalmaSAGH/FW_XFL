@@ -132,13 +132,42 @@ def main():
     # Register with server as physical client
     register_with_server(server_url, args.client_id, ip_address)
     
-    # Create model
-    dataset_cfg = DATASET_CONFIG.get(args.dataset, ('SimpleCNN', 10, 1, 28))
-    model_name, num_classes, in_channels, input_size = dataset_cfg
+    # ── Get current configuration from server ─────────────────────────────────
+    print(f"Client {args.client_id}: Getting configuration from server...")
+    try:
+        response = requests.get(f"{server_url}/api/config", timeout=10)
+        if response.status_code == 200:
+            config = response.json().get('config', {})
+            server_model = config.get('model', 'SimpleCNN')
+            server_dataset = config.get('dataset', args.dataset)
+            server_num_clients = config.get('numClients', args.num_clients)
+            server_batch_size = config.get('batchSize', args.batch_size)
+            server_local_epochs = config.get('localEpochs', args.local_epochs)
+            print(f"Client {args.client_id}: Server config - model={server_model}, dataset={server_dataset}, "
+                  f"num_clients={server_num_clients}, batch_size={server_batch_size}, local_epochs={server_local_epochs}")
+        else:
+            print(f"Client {args.client_id}: Could not get server config, using command line args")
+            server_model = 'SimpleCNN'
+            server_dataset = args.dataset
+            server_num_clients = args.num_clients
+            server_batch_size = args.batch_size
+            server_local_epochs = args.local_epochs
+    except Exception as e:
+        print(f"Client {args.client_id}: Error getting server config: {e}, using command line args")
+        server_model = 'SimpleCNN'
+        server_dataset = args.dataset
+        server_num_clients = args.num_clients
+        server_batch_size = args.batch_size
+        server_local_epochs = args.local_epochs
+
+    # ── Create model using server configuration ──────────────────────────────
+    # Get parameters for the server-selected model
+    from client.model import get_model_params_for_dataset
+    num_classes, in_channels, input_size = get_model_params_for_dataset(server_model, server_dataset)
     
-    print(f"Creating model: {model_name} ({num_classes} classes)")
+    print(f"Creating model: {server_model} ({num_classes} classes, {in_channels}ch, {input_size}px)")
     model = create_model(
-        model_name,
+        server_model,
         num_classes=num_classes,
         in_channels=in_channels,
         input_size=input_size
@@ -147,10 +176,10 @@ def main():
     # Load data
     print(f"Loading data from {args.data_dir}...")
     train_loader = create_single_client_loader(
-        dataset_name=args.dataset,
+        dataset_name=server_dataset,
         client_id=args.client_id,
-        num_clients=args.num_clients,
-        batch_size=args.batch_size,
+        num_clients=server_num_clients,
+        batch_size=server_batch_size,
         distribution=args.distribution,
         data_dir=args.data_dir,
         seed=42
@@ -163,11 +192,11 @@ def main():
         model=model,
         train_loader=train_loader,
         server_url=server_url,
-        local_epochs=args.local_epochs,
+        local_epochs=server_local_epochs,
         timeout=120,
-        dataset_name=args.dataset,        
-        num_clients=args.num_clients,     
-        batch_size=args.batch_size,       
+        dataset_name=server_dataset,        
+        num_clients=server_num_clients,     
+        batch_size=server_batch_size,       
         distribution=args.distribution,  
         data_dir=args.data_dir,
         use_real_hardware_metrics=(args.mode == 'real-hardware'),
@@ -180,6 +209,7 @@ def main():
         print("\n📊 Initializing Real Hardware Metrics Collector...")
         metrics_collector = RealHardwareMetricsCollector(
             client_id=args.client_id,
+            server_url=server_url,  # Pass server_url for ping measurements
             collection_interval=1.0
         )
         metrics_collector.start_collection()
@@ -201,6 +231,23 @@ def main():
     # Make ip_address available for re-registration
     client_ip_address = ip_address
     
+    last_heartbeat = 0
+    heartbeat_interval = 20
+
+    def send_heartbeat():
+        try:
+            requests.post(
+                f"{server_url}/api/physical/heartbeat",
+                json={
+                    "client_id": args.client_id,
+                    "status": "training" if round_in_progress else "connected",
+                    "round_number": round_num
+                },
+                timeout=5
+            )
+        except Exception:
+            pass
+
     while True:
         try:
             current_time = time.time()
@@ -225,6 +272,22 @@ def main():
                 selected_clients = status.get('selected_clients', [])
                 current_round = status.get('current_round', 0)
                 
+                if current_time - last_heartbeat >= heartbeat_interval:
+                    heartbeat_payload = {
+                        "client_id": args.client_id,
+                        "status": "training" if round_in_progress and args.client_id in selected_clients else "connected",
+                        "round_number": current_round
+                    }
+                    try:
+                        requests.post(
+                            f"{server_url}/api/physical/heartbeat",
+                            json=heartbeat_payload,
+                            timeout=5
+                        )
+                    except Exception:
+                        pass
+                    last_heartbeat = current_time
+
                 if round_in_progress and args.client_id in selected_clients and current_round > last_round:
                     last_round = current_round
                     round_num = current_round

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -347,7 +347,7 @@
             border-radius: 2px;
         }
 
-        /* ===== RIGHT PANEL ===== */
+/* ===== RIGHT PANEL ===== */
         .metrics-panel {
             background: #252942;
             padding: 15px;
@@ -361,6 +361,21 @@
             padding: 12px;
             margin-bottom: 15px;
             border: 1px solid #2d3348;
+        }
+
+        .chart-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .chart-row .chart-container {
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        .half-width {
+            flex: 1;
         }
 
         .chart-title {
@@ -564,7 +579,19 @@
 
             <button class="btn btn-primary export-btn" onclick="exportData()">💾 Export to CSV</button>
 
+            <div class="chart-container">
+                <div class="chart-title">🎯 Model Accuracy (%)</div>
+                <div class="chart-wrapper">
+                    <canvas id="accuracyChart"></canvas>
+                </div>
+            </div>
 
+            <div class="chart-container">
+                <div class="chart-title">💻 Average CPU Usage (%)</div>
+                <div class="chart-wrapper">
+                    <canvas id="cpuChart"></canvas>
+                </div>
+            </div>
 
             <div class="chart-container">
                 <div class="chart-title">📊 Bandwidth Usage (MB)</div>
@@ -580,17 +607,26 @@
                 </div>
             </div>
 
-            <div class="chart-container">
-                <div class="chart-title">⚡ Energy Consumption (Wh)</div>
+<div class="chart-container">
+                <div class="chart-title">🧠 Memory Usage (MB)</div>
                 <div class="chart-wrapper">
-                    <canvas id="energyChart"></canvas>
+                    <canvas id="memoryChart"></canvas>
                 </div>
             </div>
 
-            <div class="chart-container">
-                <div class="chart-title">📡 Network Metrics</div>
-                <div class="chart-wrapper" style="height: 180px;">
-                    <canvas id="networkMetricsChart"></canvas>
+            <div class="chart-row">
+                <div class="chart-container half-width">
+                    <div class="chart-title">⚡ Energy Consumption (Wh)</div>
+                    <div class="chart-wrapper">
+                        <canvas id="energyChart"></canvas>
+                    </div>
+                </div>
+
+                <div class="chart-container half-width">
+                    <div class="chart-title">📡 Network Metrics (Packet Loss & Jitter)</div>
+                    <div class="chart-wrapper" style="height: 180px;">
+                        <canvas id="networkMetricsChart"></canvas>
+                    </div>
                 </div>
             </div>
 
@@ -630,7 +666,7 @@
                 card.innerHTML = `
                     <div class="pi-id">Pi ${String(i).padStart(2, '0')}</div>
                     <div class="pi-status">Idle</div>
-                    <div class="pi-metrics">CPU: -</div>
+                    <div class="pi-metrics">CPU: - | RAM: -</div>
                 `;
                 grid.appendChild(card);
             }
@@ -652,9 +688,9 @@
 
             card.querySelector('.pi-status').textContent = statusText[state] || 'Idle';
             
-            if (metrics.cpu) {
-                card.querySelector('.pi-metrics').textContent = `CPU: ${metrics.cpu}%`;
-            }
+            const cpuText = metrics.cpu ? `CPU: ${metrics.cpu}%` : 'CPU: -';
+            const ramText = metrics.memory ? `RAM: ${metrics.memory}MB` : 'RAM: -';
+            card.querySelector('.pi-metrics').textContent = `${cpuText} | ${ramText}`;
         }
 
         // Charts configuration
@@ -692,6 +728,23 @@
                     data: [],
                     borderColor: '#ffa726',
                     backgroundColor: 'rgba(255, 167, 38, 0.1)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 3
+                }]
+            },
+            options: chartConfig
+        });
+
+        const memoryChart = new Chart(document.getElementById('memoryChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    data: [],
+                    borderColor: '#ab47bc',
+                    backgroundColor: 'rgba(171, 71, 188, 0.1)',
                     borderWidth: 2,
                     tension: 0.4,
                     fill: true,
@@ -754,6 +807,70 @@
                 scales: {
                     x: { grid: { color: '#2d3348' }, ticks: { color: '#888', font: { size: 9 } } },
                     y: { grid: { color: '#2d3348' }, ticks: { color: '#888', font: { size: 9 } } }
+                }
+            }
+        });
+
+        // Accuracy Chart - from round_metrics table
+        const accuracyChart = new Chart(document.getElementById('accuracyChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    data: [],
+                    borderColor: '#4fc3f7',
+                    backgroundColor: 'rgba(79, 195, 247, 0.2)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointBackgroundColor: '#4fc3f7'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { color: '#2d3348' }, ticks: { color: '#888', font: { size: 9 } } },
+                    y: { 
+                        grid: { color: '#2d3348' }, 
+                        ticks: { color: '#888', font: { size: 9 } },
+                        min: 0,
+                        max: 100
+                    }
+                }
+            }
+        });
+
+        // CPU Chart - average CPU from connected clients
+        const cpuChart = new Chart(document.getElementById('cpuChart'), {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    data: [],
+                    borderColor: '#ffa726',
+                    backgroundColor: 'rgba(255, 167, 38, 0.2)',
+                    borderWidth: 2,
+                    tension: 0.4,
+                    fill: true,
+                    pointRadius: 4,
+                    pointBackgroundColor: '#ffa726'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { grid: { color: '#2d3348' }, ticks: { color: '#888', font: { size: 9 } } },
+                    y: { 
+                        grid: { color: '#2d3348' }, 
+                        ticks: { color: '#888', font: { size: 9 } },
+                        min: 0,
+                        max: 100
+                    }
                 }
             }
         });
@@ -821,16 +938,18 @@
         // Update dashboard
         async function updateDashboard() {
             try {
-                const [status, accuracy, loss, clients, bandwidth, latency, energy, networkMetrics, history] = await Promise.all([
+                const [status, accuracy, loss, clients, bandwidth, latency, memory, energy, networkMetrics, history, cpu] = await Promise.all([
                     fetch('/api/status').then(r => r.json()),
                     fetch('/api/accuracy').then(r => r.json()),
                     fetch('/api/loss').then(r => r.json()),
                     fetch('/api/clients').then(r => r.json()),
                     fetch('/api/bandwidth').then(r => r.json()),
                     fetch('/api/latency').then(r => r.json()),
+                    fetch('/api/memory').then(r => r.json()),
                     fetch('/api/energy').then(r => r.json()),
                     fetch('/api/network_metrics').then(r => r.json()),
-                    fetch('/api/rounds_history').then(r => r.json())
+                    fetch('/api/rounds_history').then(r => r.json()),
+                    fetch('/api/cpu').then(r => r.json())
                 ]);
 
                 // Update XFL display
@@ -869,30 +988,42 @@
                 }
 
                 // Update charts
-
-
-                bandwidthChart.data.labels = bandwidth.labels || [];
-                bandwidthChart.data.datasets[0].data = bandwidth.values || [];
+                bandwidthChart.data.labels = bandwidth.rounds || [];
+                bandwidthChart.data.datasets[0].data = bandwidth.bandwidth_mb || [];
                 bandwidthChart.update('none');
 
-                latencyChart.data.labels = latency.rounds;
-                latencyChart.data.datasets[0].data = latency.latency;
+                latencyChart.data.labels = latency.rounds || [];
+                latencyChart.data.datasets[0].data = latency.latency || [];
                 latencyChart.update('none');
 
-                energyChart.data.labels = energy.rounds;
-                energyChart.data.datasets[0].data = energy.energy;
+                memoryChart.data.labels = memory.rounds || [];
+                memoryChart.data.datasets[0].data = memory.memory || [];
+                memoryChart.update('none');
+
+                energyChart.data.labels = energy.rounds || [];
+                energyChart.data.datasets[0].data = energy.energy || [];
                 energyChart.update('none');
 
-                networkMetricsChart.data.labels = networkMetrics.rounds;
-                networkMetricsChart.data.datasets[0].data = networkMetrics.packet_loss;
-                networkMetricsChart.data.datasets[1].data = networkMetrics.jitter;
+                networkMetricsChart.data.labels = networkMetrics.rounds || [];
+                networkMetricsChart.data.datasets[0].data = networkMetrics.packet_loss || [];
+                networkMetricsChart.data.datasets[1].data = networkMetrics.jitter || [];
                 networkMetricsChart.update('none');
+
+                // Update Accuracy and CPU charts
+                accuracyChart.data.labels = accuracy.rounds || [];
+                accuracyChart.data.datasets[0].data = accuracy.accuracy || [];
+                accuracyChart.update('none');
+
+                cpuChart.data.labels = cpu.rounds || [];
+                cpuChart.data.datasets[0].data = cpu.cpu || [];
+                cpuChart.update('none');
 
                 // Update Pi cards
                 clients.clients.forEach(client => {
                     if (client.client_id < NUM_DEVICES) {
                         updatePiCard(client.client_id, client.state, { 
-                            cpu: client.avg_cpu 
+                            cpu: client.avg_cpu,
+                            memory: client.avg_memory
                         });
                     }
                 });

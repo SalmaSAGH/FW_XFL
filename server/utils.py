@@ -114,16 +114,19 @@ def validate_config(config):
         raise ValueError("num_rounds must be positive")
     
     # Validate dataset
-    valid_datasets = ["MNIST", "CIFAR10", "FashionMNIST"]
+    valid_datasets = ["MNIST", "CIFAR10", "FashionMNIST", "CIFAR100", "EMNIST"]
     if config.dataset.name not in valid_datasets:
         raise ValueError(f"Invalid dataset: {config.dataset.name}. Must be one of {valid_datasets}")
     
     # Validate model
-    valid_models = ["SimpleCNN", "LeNet5"]
+    valid_models = [
+        "SimpleCNN", "LeNet5", "TinyCNN", "MicroLeNet", "DepthwiseCNN",
+        "CIFAR100CNN", "EMNISTCNN", "MobileNetV2", "ResNet8", "ShuffleNetV2"
+    ]
     if config.model.name not in valid_models:
         raise ValueError(f"Invalid model: {config.model.name}. Must be one of {valid_models}")
     
-    print("✅ Configuration validation passed")
+    print("Configuration validation passed")
 
 
 # Test function

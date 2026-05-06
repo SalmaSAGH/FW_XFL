@@ -318,6 +318,7 @@ class ServerMetricsCollector:
         cursor.execute("ALTER TABLE client_metrics ADD COLUMN IF NOT EXISTS energy_joules REAL")
         cursor.execute("ALTER TABLE client_metrics ADD COLUMN IF NOT EXISTS energy_wh REAL")
         cursor.execute("ALTER TABLE client_metrics ADD COLUMN IF NOT EXISTS avg_power_watts REAL")
+        cursor.execute("ALTER TABLE client_metrics ADD COLUMN IF NOT EXISTS transmission_time_sec REAL")
 
         conn.commit()
         conn.close()
@@ -455,7 +456,8 @@ class ServerMetricsCollector:
                     'bytes_received': client_metrics.get('bytes_received', 0),
                     'latency_ms': client_metrics.get('latency_ms', 0.0),
                     'packet_loss_rate': client_metrics.get('packet_loss_rate', 0.0),
-                    'jitter_ms': client_metrics.get('jitter_ms', 0.0)
+                    'jitter_ms': client_metrics.get('jitter_ms', 0.0),
+                    'transmission_time_sec': client_metrics.get('transmission_time_sec', 0.0)
                 }
             
             # Energy metrics - check both formats
@@ -474,14 +476,15 @@ class ServerMetricsCollector:
             cursor.execute("""
                 INSERT INTO client_metrics (round_number, client_id, timestamp, training_loss, training_accuracy,
                  training_time_sec, num_samples, model_size_mb, cpu_percent, memory_mb, bytes_sent, bytes_received,
-                 latency_ms, packet_loss_rate, jitter_ms, energy_joules, energy_wh, avg_power_watts, metrics_json)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 latency_ms, packet_loss_rate, jitter_ms, energy_joules, energy_wh, avg_power_watts, transmission_time_sec, metrics_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (round_number, client_id, client_metrics.get('timestamp', time.time()),
                   training.get('loss'), training.get('accuracy'), training.get('training_time'),
                   training.get('num_samples'), model.get('total_mb'), system.get('process_cpu_percent'),
                   system.get('process_memory_mb'), network.get('bytes_sent', 0), network.get('bytes_received', 0),
                   network.get('latency_ms', 0.0), network.get('packet_loss_rate', 0.0), network.get('jitter_ms', 0.0),
                   energy.get('energy_joules'), energy.get('energy_wh'), energy.get('avg_power_watts'),
+                  network.get('transmission_time_sec', 0.0),
                   psycopg2.extras.Json(client_metrics)))
         
         try:
@@ -534,7 +537,8 @@ class ServerMetricsCollector:
                     'bytes_received': client_metrics.get('bytes_received', 0),
                     'latency_ms': client_metrics.get('latency_ms', 0.0),
                     'packet_loss_rate': client_metrics.get('packet_loss_rate', 0.0),
-                    'jitter_ms': client_metrics.get('jitter_ms', 0.0)
+                    'jitter_ms': client_metrics.get('jitter_ms', 0.0),
+                    'transmission_time_sec': client_metrics.get('transmission_time_sec', 0.0)
                 }
             
             # Energy metrics - check both formats
@@ -568,6 +572,7 @@ class ServerMetricsCollector:
                     energy_joules = %s,
                     energy_wh = %s,
                     avg_power_watts = %s,
+                    transmission_time_sec = %s,
                     metrics_json = %s
                 WHERE round_number = %s AND client_id = %s
             """, (
@@ -587,6 +592,7 @@ class ServerMetricsCollector:
                 energy.get('energy_joules'),
                 energy.get('energy_wh'),
                 energy.get('avg_power_watts'),
+                network.get('transmission_time_sec', 0.0),
                 psycopg2.extras.Json(client_metrics),
                 round_number,
                 client_id
@@ -595,14 +601,15 @@ class ServerMetricsCollector:
                 cursor.execute("""
                     INSERT INTO client_metrics (round_number, client_id, timestamp, training_loss, training_accuracy,
                      training_time_sec, num_samples, model_size_mb, cpu_percent, memory_mb, bytes_sent, bytes_received,
-                     latency_ms, packet_loss_rate, jitter_ms, energy_joules, energy_wh, avg_power_watts, metrics_json)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     latency_ms, packet_loss_rate, jitter_ms, energy_joules, energy_wh, avg_power_watts, transmission_time_sec, metrics_json)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (round_number, client_id, client_metrics.get('timestamp', time.time()),
                       training.get('loss'), training.get('accuracy'), training.get('training_time'),
                       training.get('num_samples'), model.get('total_mb'), system.get('process_cpu_percent'),
                       system.get('process_memory_mb'), network.get('bytes_sent', 0), network.get('bytes_received', 0),
                       network.get('latency_ms', 0.0), network.get('packet_loss_rate', 0.0), network.get('jitter_ms', 0.0),
                       energy.get('energy_joules'), energy.get('energy_wh'), energy.get('avg_power_watts'),
+                      network.get('transmission_time_sec', 0.0),
                       psycopg2.extras.Json(client_metrics)))
 
         try:

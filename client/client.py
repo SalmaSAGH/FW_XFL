@@ -15,7 +15,7 @@ import torch.optim as optim
 
 from .trainer import LocalTrainer
 from .metrics import MetricsCollector
-from .model import create_model, DATASET_CONFIG
+from .model import create_model, DATASET_CONFIG, get_model_params_for_dataset
 from .dataset import create_single_client_loader
 from config.config_parser import load_config
 
@@ -56,6 +56,9 @@ class FLClient:
         self.max_retries = 5
         self.base_delay = 1
 
+        self.learning_rate = learning_rate
+        self.optimizer_name = optimizer
+
         self.sparsification_threshold = sparsification_threshold
         self.quantization_bits = quantization_bits
 
@@ -69,7 +72,7 @@ class FLClient:
         self.distribution = distribution
         self.data_dir = data_dir
         self.current_dataset_name = dataset_name
-        self.current_model_name = DATASET_CONFIG.get(dataset_name, ('SimpleCNN', 10, 1, 28))[0]
+        self.current_model_name = model.__class__.__name__
         self.current_distribution = distribution
 
         self.trainer = LocalTrainer(
@@ -130,29 +133,39 @@ class FLClient:
         return DATASET_CONFIG.get(dataset_name, ('SimpleCNN', 10, 1, 28))
 
     def reload_data_if_needed(self, dataset_name: str,
+                               model_name: str = None,
                                distribution: str = None,
+                               num_clients: int = None,
+                               batch_size: int = None,
                                verbose: bool = False) -> bool:
         needs_reload = (
             dataset_name != self.current_dataset_name or
-            (distribution is not None and distribution != self.current_distribution)
+            (model_name is not None and model_name != self.current_model_name) or
+            (distribution is not None and distribution != self.current_distribution) or
+            (num_clients is not None and num_clients != self.num_clients) or
+            (batch_size is not None and batch_size != self.batch_size)
         )
 
         print(f"DEBUG reload_data_if_needed: needs_reload={needs_reload} | "
-          f"current={self.current_dataset_name} vs server={dataset_name}")
+          f"current={self.current_dataset_name} vs server={dataset_name} | "
+          f"num_clients {self.num_clients} vs {num_clients} | "
+          f"batch_size {self.batch_size} vs {batch_size}")
         
         if not needs_reload:
             return False
 
-        if dataset_name != self.current_dataset_name:
-            model_name, num_classes, in_channels, input_size = \
-                self._get_model_for_dataset(dataset_name)
+        # Determine which model should be used for the current dataset.
+        target_model_name = model_name if model_name is not None else self._get_model_for_dataset(dataset_name)[0]
+        
+        # Get the correct parameters for the target model and dataset
+        num_classes, in_channels, input_size = get_model_params_for_dataset(target_model_name, dataset_name)
 
-            print(f"Client {self.client_id}: 🔄 Dataset change: "
-                  f"{self.current_dataset_name} → {dataset_name} | "
-                  f"model={model_name} | in_channels={in_channels} | "
-                  f"input_size={input_size} | num_classes={num_classes}")
+        if dataset_name != self.current_dataset_name or target_model_name != self.current_model_name:
+            print(f"Client {self.client_id}: 🔄 Model or dataset change: "
+                  f"{self.current_dataset_name}/{self.current_model_name} → {dataset_name}/{target_model_name} | "
+                  f"in_channels={in_channels} | input_size={input_size} | num_classes={num_classes}")
 
-            self.model = create_model(model_name, num_classes=num_classes,
+            self.model = create_model(target_model_name, num_classes=num_classes,
                                        in_channels=in_channels, input_size=input_size)
 
             self.trainer.model = self.model
@@ -172,14 +185,21 @@ class FLClient:
 
 
             self.current_dataset_name = dataset_name
-            self.current_model_name = model_name
+            self.current_model_name = target_model_name
 
         if distribution is not None and distribution != self.current_distribution:
             self.distribution = distribution
             self.current_distribution = distribution
 
+        if num_clients is not None and num_clients != self.num_clients:
+            self.num_clients = num_clients
+
+        if batch_size is not None and batch_size != self.batch_size:
+            self.batch_size = batch_size
+
         print(f"Client {self.client_id}: 📦 Loading data for "
-              f"{self.current_dataset_name} ({self.distribution})...")
+              f"{self.current_dataset_name} ({self.distribution}) with {self.num_clients} clients, "
+              f"batch size={self.batch_size}...")
 
         self.train_loader = create_single_client_loader(
             dataset_name=self.current_dataset_name,
@@ -218,8 +238,74 @@ class FLClient:
             xfl_param = data.get('xfl_param', 3)
             server_dataset = data.get('dataset_name', 'MNIST')
             server_distribution = data.get('data_distribution', 'iid')
+            server_num_clients = data.get('num_clients', self.num_clients)
+            server_batch_size = data.get('batch_size', self.batch_size)
+            server_local_epochs = data.get('local_epochs', self.local_epochs)
+            server_learning_rate = data.get('learning_rate', self.learning_rate)
+            server_model_name = data.get('model_name', self.current_model_name)
 
-            
+            # Update local training hyperparameters if changed
+            if server_local_epochs != self.local_epochs:
+                print(f"Client {self.client_id}: 🔄 local_epochs changed: {self.local_epochs} → {server_local_epochs}")
+                self.local_epochs = int(server_local_epochs)
+
+            if server_learning_rate != self.learning_rate:
+                print(f"Client {self.client_id}: 🔄 learning_rate changed: {self.learning_rate} → {server_learning_rate}")
+                self.learning_rate = float(server_learning_rate)
+                self.trainer.learning_rate = self.learning_rate
+                for param_group in self.trainer.optimizer.param_groups:
+                    param_group['lr'] = self.learning_rate
+
+            # Update network config if changed
+            server_network_config = {
+                'latency_ms': data.get('network_latency_ms', 0),
+                'latency_std_ms': data.get('network_latency_std_ms', 0),
+                'bandwidth_mbps': data.get('network_bandwidth_mbps', 10),
+                'packet_loss_rate': data.get('network_packet_loss_rate', 0),
+                'jitter_ms': data.get('jitter_ms', 0),
+                'simulate_constraints': data.get('simulate_constraints', False)
+            }
+            if hasattr(self, 'metrics_collector') and self.metrics_collector:
+                self.metrics_collector.update_network_config(server_network_config)
+
+            # Check system limits (CPU, RAM) and add to metrics if exceeded
+            server_cpu_limit = data.get('cpu_limit', 100)
+            server_ram_limit = data.get('ram_limit', 2048)
+            if hasattr(self, 'metrics_collector') and self.metrics_collector:
+                current_metrics = self.metrics_collector.get_system_metrics()
+                current_cpu = current_metrics.get('system_cpu_percent', 0)
+                current_ram = current_metrics.get('system_memory_percent', 0)
+                
+                # Add limit info to metrics for server-side monitoring
+                self.metrics_collector.network_config['cpu_limit'] = server_cpu_limit
+                self.metrics_collector.network_config['ram_limit'] = server_ram_limit
+                
+                # Log warning if limits exceeded
+                if current_cpu > server_cpu_limit:
+                    print(f"⚠️ Client {self.client_id}: CPU limit exceeded! "
+                          f"Current: {current_cpu}% > Limit: {server_cpu_limit}%")
+                if current_ram > server_ram_limit:
+                    print(f"⚠️ Client {self.client_id}: RAM limit exceeded! "
+                          f"Current: {current_ram}% > Limit: {server_ram_limit}%")
+
+            # Update num_clients if changed
+            if server_num_clients != self.num_clients:
+                print(f"Client {self.client_id}: 🔄 num_clients changed: {self.num_clients} → {server_num_clients}")
+                self.num_clients = int(server_num_clients)
+
+            if server_batch_size != self.batch_size:
+                print(f"Client {self.client_id}: 🔄 batch_size changed: {self.batch_size} → {server_batch_size}")
+                self.batch_size = int(server_batch_size)
+
+            self.reload_data_if_needed(
+                server_dataset,
+                model_name=server_model_name,
+                distribution=server_distribution,
+                num_clients=server_num_clients,
+                batch_size=server_batch_size,
+                verbose=verbose
+            )
+
             local_state = self.trainer.model.state_dict()
             debug_layers = ['conv1.weight', 'conv2.weight', 'fc1.weight']
             for layer in debug_layers:
@@ -236,9 +322,6 @@ class FLClient:
                 elif layer in local_state:
                     print(f"Client {self.client_id}: ⚠️  {layer} "
                           f"({local_state[layer].shape}) missing from server")
-
-            # Step 2: Reload model/data if dataset changed
-            self.reload_data_if_needed(server_dataset, server_distribution, verbose)
 
             # DEBUG client loader batch shape
             try:
@@ -293,31 +376,83 @@ class FLClient:
                 trained_weights, xfl_strategy, xfl_param, current_round, verbose
             )
 
-# Step 7: Prepare payload (metrics collected AFTER transmission)
+# Step 7: Prepare payload and send weights + real metrics in a single request
             model_size_bytes = sum(
                 p.numel() * p.element_size()
                 for p in weights_to_send.values()
                 if hasattr(p, 'element_size')
             )
 
+            # Build metrics now so the server receives a real client submission immediately
+            if self.use_real_hardware_metrics and self.real_metrics_collector is not None:
+                real_summary = self.real_metrics_collector.get_summary()
+                metrics_payload = {
+                    'training_loss': training_metrics.get('loss', 0),
+                    'training_accuracy': training_metrics.get('accuracy', 0),
+                    'training_time_sec': train_time,
+                    'num_samples': num_samples,
+                    'bytes_sent': model_size_bytes,
+                    'bytes_received': model_size_bytes,
+                    'cpu_percent': real_summary.get('cpu', {}).get('avg_percent', 0),
+                    'memory_mb': real_summary.get('memory', {}).get('avg_mb', 0),
+                    'temperature_celsius': real_summary.get('temperature', {}).get('avg_celsius'),
+                    'energy_wh': real_summary.get('energy', {}).get('total_wh', 0),
+                    'jitter_ms': real_summary.get('network', {}).get('avg_jitter_ms', 0),
+                    'packet_loss_rate': real_summary.get('network', {}).get('packet_loss_rate', 0),
+                    'is_real_measurement': True
+                }
+            else:
+                metrics_payload = {
+                    'training_loss': training_metrics.get('loss', 0),
+                    'training_accuracy': training_metrics.get('accuracy', 0),
+                    'training_time_sec': train_time,
+                    'num_samples': num_samples,
+                    'bytes_sent': model_size_bytes,
+                    'bytes_received': model_size_bytes,
+                    'is_real_measurement': True
+                }
+
             payload = {
                 "client_id": self.client_id,
                 "weights": self._weights_to_base64(weights_to_send),
                 "num_samples": num_samples,
-                "metrics": {}  # Placeholder - will be filled after transmission
+                "metrics": metrics_payload
             }
 
             if hasattr(self, '_quantization_meta') and self._quantization_meta:
                 payload["quantization_meta"] = self._quantization_meta
                 delattr(self, '_quantization_meta')
 
-            # MEASURE REAL TRANSMISSION ↓
+            tx_timeout = 180
+            print(f"🔍 DEBUG: upload submit_update timeout={tx_timeout}s (real_hardware={self.use_real_hardware_metrics})")
             start_tx = time.perf_counter()
-            response = requests.post(
-                f"{self.server_url}/api/submit_update",
-                json=payload,
-                timeout=30
-            )
+
+            max_retries = 3
+            retry_delay = 5
+            response = None
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    response = requests.post(
+                        f"{self.server_url}/api/submit_update",
+                        json=payload,
+                        timeout=tx_timeout
+                    )
+                    break
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        print(f"   ⚠️ Upload attempt {attempt + 1}/{max_retries} failed: {e}")
+                        print("   ⏳ Retrying upload in 5s...")
+                        time.sleep(retry_delay)
+                    else:
+                        print(f"   ❌ Upload failed after {max_retries} attempts")
+
+            if response is None:
+                print(f"Client {self.client_id}: ❌ submit_update upload failed: {last_error}")
+                self._cleanup_memory()
+                return False
+
             tx_time = time.perf_counter() - start_tx
             tx_latency_ms = tx_time * 1000  # Real end-to-end latency
 
@@ -328,147 +463,10 @@ class FLClient:
 
             result = response.json()
 
-            # NOW collect REAL metrics after successful transmission
-            # Use real hardware metrics if available (Raspberry Pi), otherwise use simulated
-            if self.use_real_hardware_metrics and self.real_metrics_collector is not None:
-                # Get real hardware metrics from Raspberry Pi
-                real_summary = self.real_metrics_collector.get_summary()
-                
-                # Build real metrics dict
-                full_metrics = {
-                    'training_loss': training_metrics.get('loss', 0),
-                    'training_accuracy': training_metrics.get('accuracy', 0),
-                    'training_time_sec': train_time,
-                    'num_samples': num_samples,
-                    # Real network metrics
-                    'latency_ms': tx_latency_ms,
-                    'transmission_time_sec': tx_time,
-                    'bytes_sent': model_size_bytes,
-                    'bytes_received': model_size_bytes,
-                    # Real hardware metrics from Raspberry Pi
-                    'cpu_percent': real_summary.get('cpu', {}).get('avg_percent', 0),
-                    'memory_mb': real_summary.get('memory', {}).get('avg_mb', 0),
-                    'temperature_celsius': real_summary.get('temperature', {}).get('avg_celsius'),
-                    'energy_wh': real_summary.get('energy', {}).get('total_wh', 0),
-                    # Network quality metrics (estimated from real measurements)
-                    'jitter_ms': real_summary.get('network', {}).get('avg_jitter_ms', 0),
-                    'packet_loss_rate': real_summary.get('network', {}).get('packet_loss_rate', 0),
-                    'is_real_measurement': True
-                }
-            else:
-                # Use simulated metrics (default behavior)
-                network_metrics = self.metrics_collector.get_network_metrics(
-                    bytes_sent=model_size_bytes,
-                    bytes_received=model_size_bytes,
-                    transmission_time=tx_time
-                )
-                network_metrics.update({
-                    "http_status": response.status_code,
-                    "is_real_measurement": True
-                })
-
-                full_metrics = self.metrics_collector.collect_full_metrics(
-                    training_metrics=training_metrics,
-                    model_weights=weights_to_send,
-                    network_metrics=network_metrics,
-                    transmission_time=tx_time,
-                    model_size_bytes=model_size_bytes
-                )
-
-            # Store the REAL complete metrics to DB via server
-            payload_with_metrics = {
-                "client_id": self.client_id,
-                "weights": self._weights_to_base64(weights_to_send),
-                "num_samples": num_samples,
-                "metrics": full_metrics  # Now includes real transmission_time_sec, latency_ms
-            }
-
-            if hasattr(self, '_quantization_meta') and self._quantization_meta:
-                payload_with_metrics["quantization_meta"] = self._quantization_meta
-                delattr(self, '_quantization_meta')
-
-            # Send FINAL payload with REAL metrics to server
-            # Use longer timeout for real-hardware mode over WiFi
-            send_timeout = 120 if self.use_real_hardware_metrics else 30
-            print(f"🔍 DEBUG: Sending FINAL metrics to server with {len(full_metrics)} keys")
-            print(f"   Keys: {list(full_metrics.keys())}")
-            print(f"   Using timeout: {send_timeout}s (real_hardware={self.use_real_hardware_metrics})")
-            
-            # Retry logic for unreliable WiFi connections
-            max_retries = 3
-            retry_delay = 5
-            final_response = None
-            last_error = None
-            
-            for attempt in range(max_retries):
-                try:
-                    final_response = requests.post(
-                        f"{self.server_url}/api/submit_update",
-                        json=payload_with_metrics,
-                        timeout=send_timeout
-                    )
-                    break  # Success, exit retry loop
-                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-                    last_error = e
-                    if attempt < max_retries - 1:
-                        print(f"   ⚠️ Attempt {attempt + 1}/{max_retries} failed: {e}")
-                        print(f"   ⏳ Retrying in {retry_delay}s...")
-                        time.sleep(retry_delay)
-                    else:
-                        print(f"   ❌ All {max_retries} attempts failed")
-
-            # Handle case where all retries failed
-            if final_response is None:
-                print(f"Client {self.client_id}: ❌ Failed to send metrics after {max_retries} attempts")
-                print(f"   Last error: {last_error}")
-                self._cleanup_memory()
-                return False
-
-            print(f"🔍 DEBUG: Final response status={final_response.status_code}")
-            if final_response.status_code == 200:
-                result = final_response.json()
-                print(f"   Response: {result}")
-                if verbose:
-                    print(f"Client {self.client_id}: ✅ Final metrics sent | "
-                          f"{result.get('submissions')} total submissions")
-            else:
-                print(f"Client {self.client_id}: ⚠️ Final metrics send failed "
-                      f"(status={final_response.status_code}) but model already sent")
-
             if verbose:
                 print(f"Client {self.client_id}: ✅ Submitted | "
                       f"{result.get('submissions')} updates received by server | "
                       f"Real tx_time={tx_time:.3f}s | latency={tx_latency_ms:.1f}ms")
-
-            self._cleanup_memory()
-            return True
-            payload = {
-                "client_id": self.client_id,
-                "weights": self._weights_to_base64(weights_to_send),
-                "num_samples": num_samples,
-                "metrics": full_metrics
-            }
-
-            if hasattr(self, '_quantization_meta') and self._quantization_meta:
-                payload["quantization_meta"] = self._quantization_meta
-                delattr(self, '_quantization_meta')
-
-            response = requests.post(
-                f"{self.server_url}/api/submit_update",
-                json=payload,
-                timeout=30
-            )
-
-            if response.status_code != 200:
-                print(f"Client {self.client_id}: ❌ submit_update returned "
-                      f"{response.status_code}: {response.text[:200]}")
-                return False
-
-            result = response.json()
-
-            if verbose:
-                print(f"Client {self.client_id}: ✅ Submitted | "
-                      f"{result.get('submissions')} updates received by server")
 
             self._cleanup_memory()
             return True

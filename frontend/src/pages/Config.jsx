@@ -56,7 +56,24 @@ function Config() {
   };
 
   const handleConfigChange = (field, value) => {
-    setConfig(prev => ({ ...prev, [field]: value }));
+    setConfig(prev => {
+      const newConfig = { ...prev, [field]: value };
+      
+      // Auto-update model and batch_size when dataset changes
+      if (field === 'dataset' && datasetModelMap[value]) {
+        newConfig.model = datasetModelMap[value].model;
+        // Set appropriate batch size and epochs for different datasets
+        if (value.includes('CIFAR')) {
+          newConfig.batchSize = 64;  // Smaller batch for CIFAR on RPi
+          newConfig.localEpochs = 1;  // Fewer epochs for CIFAR
+        } else {
+          newConfig.batchSize = 512;  // Larger batch for MNIST/FashionMNIST
+          newConfig.localEpochs = 2;  // More epochs for simpler datasets
+        }
+      }
+      
+      return newConfig;
+    });
   };
 
   const handleConfirm = async () => {
@@ -107,9 +124,9 @@ function Config() {
 
   // Dataset to model mapping
   const datasetModelMap = {
-    'MNIST': { model: 'SimpleCNN', numClasses: 10 },
-    'FashionMNIST': { model: 'SimpleCNN', numClasses: 10 },
-    'CIFAR10': { model: 'SimpleCNN', numClasses: 10 },
+    'MNIST': { model: 'TinyCNN', numClasses: 10 },
+    'FashionMNIST': { model: 'MicroLeNet', numClasses: 10 },
+    'CIFAR10': { model: 'TinyCNN', numClasses: 10 },
     'CIFAR100': { model: 'CIFAR100CNN', numClasses: 100 },
     'EMNIST': { model: 'EMNISTCNN', numClasses: 47 },
   };
@@ -123,10 +140,16 @@ function Config() {
   ];
 
   const models = [
-    { value: 'SimpleCNN', label: 'SimpleCNN (MNIST, FashionMNIST, CIFAR10)' },
-    { value: 'CIFAR100CNN', label: 'CIFAR100CNN (CIFAR-100)' },
-    { value: 'EMNISTCNN', label: 'EMNISTCNN (EMNIST)' },
-    { value: 'LeNet5', label: 'LeNet5 (Legacy)' },
+    { value: 'SimpleCNN', label: 'SimpleCNN (Basic CNN)' },
+    { value: 'LeNet5', label: 'LeNet5 (Classic CNN)' },
+    { value: 'TinyCNN', label: 'TinyCNN (Ultra-lightweight for RPi)' },
+    { value: 'MicroLeNet', label: 'MicroLeNet (Compact LeNet-style)' },
+    { value: 'DepthwiseCNN', label: 'DepthwiseCNN (Efficient separable)' },
+    { value: 'MobileNetV2', label: 'MobileNetV2 (Mobile-optimized)' },
+    { value: 'ResNet8', label: 'ResNet8 (Small ResNet)' },
+    { value: 'ShuffleNetV2', label: 'ShuffleNetV2 (Very efficient)' },
+    { value: 'CIFAR100CNN', label: 'CIFAR100CNN (CIFAR-100 specialized)' },
+    { value: 'EMNISTCNN', label: 'EMNISTCNN (EMNIST specialized)' },
   ];
 
   // Network parameter options
@@ -366,7 +389,7 @@ function Config() {
             <h2 className="panel-title">
               📊 Data Parameters
               <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#888', marginLeft: '10px' }}>
-                (Dataset, Distribution)
+                (Dataset, Model, Distribution)
               </span>
             </h2>
             
@@ -384,15 +407,30 @@ function Config() {
               </div>
 
               <div className="form-group">
-                <label>Data Distribution</label>
+                <label>Model</label>
                 <select
-                  value={config.dataDistribution}
-                  onChange={(e) => handleConfigChange('dataDistribution', e.target.value)}
+                  value={config.model}
+                  onChange={(e) => handleConfigChange('model', e.target.value)}
                 >
-                  <option value="iid">IID (Independent and Identically Distributed)</option>
-                  <option value="non_iid">Non-IID</option>
+                  {models.map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
                 </select>
+                <div style={{ marginTop: '5px', fontSize: '12px', color: '#888' }}>
+                  Select the model architecture for training
+                </div>
               </div>
+            </div>
+
+            <div className="form-group" style={{ marginTop: '15px' }}>
+              <label>Data Distribution</label>
+              <select
+                value={config.dataDistribution}
+                onChange={(e) => handleConfigChange('dataDistribution', e.target.value)}
+              >
+                <option value="iid">IID (Independent and Identically Distributed)</option>
+                <option value="non_iid">Non-IID</option>
+              </select>
             </div>
           </div>
 

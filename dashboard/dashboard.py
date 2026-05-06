@@ -94,7 +94,7 @@ class DashboardServer:
         @self.app.route('/api/status')
         def get_status():
             try:
-                
+                # ── FIX: get numClients from server config, not hardcoded env ──
                 num_clients = self._get_num_clients_from_server()
 
                 expected_clients = None
@@ -264,6 +264,42 @@ class DashboardServer:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+        @self.app.route('/api/cpu')
+        def get_cpu_data():
+            """
+            Get average CPU usage per round from connected clients.
+            Calculated from avg_cpu of clients who submitted in each round.
+            """
+            try:
+                conn = psycopg2.connect(self.db_url)
+                cursor = conn.cursor()
+                session_id = self._get_active_session_id()
+                if session_id:
+                    cursor.execute("""
+                        SELECT cm.round_number, AVG(cm.cpu_percent) as avg_cpu
+                        FROM client_metrics cm 
+                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
+                        WHERE rm.session_id = %s AND cm.cpu_percent IS NOT NULL
+                        GROUP BY cm.round_number 
+                        ORDER BY cm.round_number
+                    """, (session_id,))
+                else:
+                    cursor.execute("""
+                        SELECT round_number, AVG(cpu_percent) as avg_cpu
+                        FROM client_metrics 
+                        WHERE cpu_percent IS NOT NULL
+                        GROUP BY round_number 
+                        ORDER BY round_number
+                    """)
+                data = cursor.fetchall()
+                conn.close()
+                return jsonify({
+                    "rounds": [row[0] for row in data],
+                    "cpu": [round(row[1], 2) if row[1] is not None else None for row in data]
+                })
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
         @self.app.route('/api/clients')
         def get_clients_data():
             # ── FIX: get numClients from server config instead of env var ─────
@@ -405,6 +441,40 @@ class DashboardServer:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+        @self.app.route('/api/throughput')
+        def get_throughput_data():
+            try:
+                conn = psycopg2.connect(self.db_url)
+                cursor = conn.cursor()
+                session_id = self._get_active_session_id()
+                if session_id:
+                    cursor.execute("""
+                        SELECT cm.round_number, 
+                               AVG(CASE WHEN cm.transmission_time_sec > 0 
+                                   THEN (cm.bytes_sent * 8.0) / (cm.transmission_time_sec * 1000000) 
+                                   ELSE 0 END) as avg_throughput_mbps
+                        FROM client_metrics cm 
+                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
+                        WHERE rm.session_id = %s
+                        GROUP BY cm.round_number 
+                        ORDER BY cm.round_number
+                    """, (session_id,))
+                else:
+                    cursor.execute("""
+                        SELECT round_number, 0.0 as avg_throughput_mbps 
+                        FROM round_metrics 
+                        WHERE session_id IS NULL 
+                        LIMIT 1
+                    """)
+                data = cursor.fetchall()
+                conn.close()
+                return jsonify({
+                    "rounds": [row[0] for row in data],
+                    "throughput_mbps": [round(row[1], 2) if row[1] else 0.0 for row in data]
+                })
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
         @self.app.route('/api/latency')
         def get_latency_data():
             try:
@@ -455,6 +525,32 @@ class DashboardServer:
                 return jsonify({
                     "rounds": [row[0] for row in data],
                     "energy": [round(row[1], 4) if row[1] is not None else None for row in data]
+                })
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
+        @self.app.route('/api/memory')
+        def get_memory_data():
+            try:
+                conn = psycopg2.connect(self.db_url)
+                cursor = conn.cursor()
+                session_id = self._get_active_session_id()
+                if session_id:
+                    cursor.execute("""
+                        SELECT cm.round_number, AVG(cm.memory_mb)
+                        FROM client_metrics cm
+                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number
+                        WHERE rm.session_id = %s
+                        GROUP BY cm.round_number
+                        ORDER BY cm.round_number
+                    """, (session_id,))
+                else:
+                    cursor.execute("SELECT NULL, NULL")
+                data = cursor.fetchall()
+                conn.close()
+                return jsonify({
+                    "rounds": [row[0] for row in data],
+                    "memory": [round(row[1], 2) if row[1] is not None else None for row in data]
                 })
             except Exception as e:
                 return jsonify({"error": str(e)}), 500

@@ -49,29 +49,58 @@ def main():
     wait_for_server(server_url)
     print(f"Client {args.client_id}: Server ready at {server_url}")
 
-    # ── Create model using DATASET_CONFIG ─────────────────────────────────────
-    dataset_cfg = DATASET_CONFIG.get(args.dataset, ('SimpleCNN', 10, 1, 28))
-    model_name, num_classes, in_channels, input_size = dataset_cfg
+    # ── Get current configuration from server ─────────────────────────────────
+    print(f"Client {args.client_id}: Getting configuration from server...")
+    try:
+        response = requests.get(f"{server_url}/api/config", timeout=10)
+        if response.status_code == 200:
+            config = response.json().get('config', {})
+            server_model = config.get('model', 'SimpleCNN')
+            server_dataset = config.get('dataset', args.dataset)
+            server_num_clients = config.get('numClients', args.num_clients)
+            server_batch_size = config.get('batchSize', args.batch_size)
+            server_local_epochs = config.get('localEpochs', args.local_epochs)
+            print(f"Client {args.client_id}: Server config - model={server_model}, dataset={server_dataset}, "
+                  f"num_clients={server_num_clients}, batch_size={server_batch_size}, local_epochs={server_local_epochs}")
+        else:
+            print(f"Client {args.client_id}: Could not get server config, using command line args")
+            server_model = 'SimpleCNN'
+            server_dataset = args.dataset
+            server_num_clients = args.num_clients
+            server_batch_size = args.batch_size
+            server_local_epochs = args.local_epochs
+    except Exception as e:
+        print(f"Client {args.client_id}: Error getting server config: {e}, using command line args")
+        server_model = 'SimpleCNN'
+        server_dataset = args.dataset
+        server_num_clients = args.num_clients
+        server_batch_size = args.batch_size
+        server_local_epochs = args.local_epochs
 
-    print(f"Client {args.client_id}: Creating model={model_name} | "
+    # ── Create model using server configuration ──────────────────────────────
+    # Get parameters for the server-selected model
+    from client.model import get_model_params_for_dataset
+    num_classes, in_channels, input_size = get_model_params_for_dataset(server_model, server_dataset)
+
+    print(f"Client {args.client_id}: Creating model={server_model} | "
           f"num_classes={num_classes} | in_channels={in_channels} | input_size={input_size}")
 
     model = create_model(
-        model_name,
+        server_model,
         num_classes=num_classes,
         in_channels=in_channels,
         input_size=input_size
     )
 
     # ── Load initial data ─────────────────────────────────────────────────────
-    print(f"Client {args.client_id}: Loading data ({args.dataset}, {args.distribution})...")
+    print(f"Client {args.client_id}: Loading data ({server_dataset}, {args.distribution})...")
     start_load = time.time()
 
     train_loader = create_single_client_loader(
-        dataset_name=args.dataset,
+        dataset_name=server_dataset,
         client_id=args.client_id,
-        num_clients=args.num_clients,
-        batch_size=args.batch_size,
+        num_clients=server_num_clients,
+        batch_size=server_batch_size,
         distribution=args.distribution,
         data_dir="/app/data",
         seed=42
@@ -86,11 +115,11 @@ def main():
         model=model,
         train_loader=train_loader,
         server_url=server_url,
-        local_epochs=args.local_epochs,
+        local_epochs=server_local_epochs,
         timeout=120,
-        dataset_name=args.dataset,        
-        num_clients=args.num_clients,     
-        batch_size=args.batch_size,       
+        dataset_name=server_dataset,        
+        num_clients=server_num_clients,     
+        batch_size=server_batch_size,       
         distribution=args.distribution,  
         data_dir="/app/data"             
     )

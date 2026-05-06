@@ -26,7 +26,7 @@ import sys
 from .strategy import create_aggregation_strategy, XFL, FedAvg
 from .metrics import ServerMetricsCollector
 from .dse import start_dse_sweep, list_dse_sessions, load_dse_session, load_all_dse_results, load_all_dse_results_grouped_by_dataset, get_dse_job_status, get_dse_job_progress, reset_dse_data
-from client.model import create_model, DATASET_CONFIG  # ← DYNAMIC MODEL SUPPORT
+from client.model import create_model, DATASET_CONFIG, get_model_params_for_dataset  # ← DYNAMIC MODEL SUPPORT
 from client.dataset import load_dataset  # ← TEST DATA LOADER
 import gc
 
@@ -439,7 +439,9 @@ class FLServer:
         xfl_param: int = 3
     ):
         self.global_model = global_model
-        self.current_dataset_name = "MNIST"  
+        self.current_dataset_name = "MNIST"
+        self.current_model_name = type(global_model).__name__  # Track current model type
+        self.pending_model_change = None  # Store pending model changes  
         self.aggregation_strategy = create_aggregation_strategy(
             aggregation_strategy,
             xfl_strategy=xfl_strategy,
@@ -447,6 +449,7 @@ class FLServer:
         )
         self.num_rounds = num_rounds
         self.clients_per_round = clients_per_round
+        self.current_clients_expected = clients_per_round
         
         self.metrics_collector = ServerMetricsCollector(db_url)
         
@@ -460,6 +463,7 @@ class FLServer:
         self.lock = threading.Lock()
         
         self.test_loader = None
+        self.round_timer = None  # Timer for round timeout
         
         print(f"FLServer initialized")
         print(f"   Strategy: {self.aggregation_strategy.name}")
@@ -520,6 +524,11 @@ class FLServer:
                     "message": "Clients are busy submitting updates"
                 }
 
+            # Cancel any existing timer
+            if self.round_timer:
+                self.round_timer.cancel()
+                self.round_timer = None
+
             # Reload config from database to get latest values
             try:
                 latest_config = load_fl_config_from_db()
@@ -534,6 +543,44 @@ class FLServer:
                     if 'numRounds' in latest_config:
                         self.num_rounds = int(latest_config['numRounds'])
                         print(f"Using numRounds from config: {self.num_rounds}")
+                    
+                    # Check if model changed and recreate if needed
+                    if 'model' in latest_config:
+                        new_model_name = latest_config['model']
+                        current_model_name = type(self.global_model).__name__
+                        # Map class name to config key name
+                        model_class_to_key = {
+                            'SimpleCNN': 'SimpleCNN',
+                            'CIFAR100CNN': 'CIFAR100CNN',
+                            'EMNISTCNN': 'EMNISTCNN',
+                            'LeNet5': 'LeNet5',
+                            'MobileNetV2': 'MobileNetV2',
+                            'ResNet8': 'ResNet8',
+                            'ShuffleNetV2': 'ShuffleNetV2',
+                        }
+                        current_key = model_class_to_key.get(current_model_name, current_model_name)
+                        
+                        if new_model_name != current_key:
+                            dataset = latest_config.get('dataset', self.current_dataset_name)
+                            dataset_cfg = DATASET_CONFIG.get(dataset, ('SimpleCNN', 10, 1, 28))
+                            _, num_classes, in_channels, input_size = dataset_cfg
+                            
+                            print(f"🔄 Model change detected: {current_key} → {new_model_name}")
+                            print(f"   Creating new model for dataset: {dataset}")
+                            
+                            self.global_model = create_model(
+                                new_model_name, 
+                                num_classes=num_classes,
+                                in_channels=in_channels,
+                                input_size=input_size
+                            )
+                            
+                            # Update test_loader for new model
+                            self.test_loader = DataLoader(
+                                load_dataset(dataset, data_dir="./data", train=False),
+                                batch_size=256, shuffle=False, num_workers=0
+                            )
+                            print(f"✅ New model '{new_model_name}' created and test loader updated")
             except Exception as e:
                 print(f"WARNING:  Warning: Could not reload config from database: {e}")
 
@@ -542,6 +589,10 @@ class FLServer:
             self.client_submissions = []
 
             self._save_current_round()
+
+            # Start round timeout timer (5 minutes)
+            self.round_timer = threading.Timer(5 * 60, self._round_timeout)
+            self.round_timer.start()
 
             # Save placeholder round metrics tagged with session_id
             try:
@@ -569,14 +620,22 @@ class FLServer:
             physical_client_ids = []
             try:
                 from .physical_client_manager import physical_client_manager
-                if physical_client_manager and physical_client_manager.clients:
-                    physical_client_ids = list(physical_client_manager.clients.keys())
-                    print(f"   📡 Using {len(physical_client_ids)} registered physical clients: {physical_client_ids}")
+                if physical_client_manager:
+                    try:
+                        active_physical_clients = physical_client_manager.get_active_clients()
+                        if active_physical_clients:
+                            physical_client_ids = active_physical_clients
+                            print(f"   📡 Using {len(physical_client_ids)} active physical clients: {physical_client_ids}")
+                        elif physical_client_manager.clients:
+                            physical_client_ids = list(physical_client_manager.clients.keys())
+                            print(f"   ⚠️ No active physical clients found, using registered clients instead: {physical_client_ids}")
+                    except Exception as e:
+                        print(f"   ⚠️ Could not query physical clients: {e}")
             except Exception as e:
                 print(f"   ⚠️ Could not get physical clients: {e}")
             
             if physical_client_ids:
-                # Use registered physical clients
+                # Use available physical clients
                 total_clients = len(physical_client_ids)
                 actual_clients_per_round = min(self.clients_per_round, total_clients)
                 self.selected_clients = random.sample(physical_client_ids, actual_clients_per_round)
@@ -585,6 +644,9 @@ class FLServer:
                 total_clients = int(fl_config.get('numClients', 40))
                 actual_clients_per_round = min(self.clients_per_round, total_clients)
                 self.selected_clients = random.sample(range(total_clients), actual_clients_per_round)
+
+            # Track the actual number of clients expected in this round
+            self.current_clients_expected = actual_clients_per_round
 
             xfl_info = self.aggregation_strategy.get_xfl_info()
             print(f"\n🔄 Starting Round {self.current_round}/{self.num_rounds}")
@@ -628,28 +690,31 @@ class FLServer:
             )
             
             if existing_idx is not None:
-                # Update existing submission with real metrics
-                self.client_submissions[existing_idx]["metrics"] = client_metrics
-                self.client_submissions[existing_idx]["weights"] = model_weights
-                self.client_submissions[existing_idx]["num_samples"] = num_samples
-                
-                # Store/update metrics in DB
-                self.metrics_collector.store_client_metrics(
-                    self.current_round,
-                    client_id,
-                    client_metrics
-                )
-                
+                # Update existing submission with real metrics or optionally replace weights
+                if client_metrics:
+                    self.client_submissions[existing_idx]["metrics"] = client_metrics
+                if model_weights is not None:
+                    self.client_submissions[existing_idx]["weights"] = model_weights
+                    self.client_submissions[existing_idx]["num_samples"] = num_samples
+                    if quantization_meta is not None:
+                        self.client_submissions[existing_idx]["quantization_meta"] = quantization_meta
+
+                if client_metrics:
+                    self.metrics_collector.store_client_metrics(
+                        self.current_round,
+                        client_id,
+                        client_metrics
+                    )
+
+                expected_clients = getattr(self, 'current_clients_expected', self.clients_per_round)
                 print(f"   ✅ Client {client_id} updated with REAL metrics "
-                      f"({len(self.client_submissions)}/{self.clients_per_round})")
+                      f"({len(self.client_submissions)}/{expected_clients})")
                 
-                # Now check if we can aggregate (all clients have real metrics)
-                # Only aggregate when we have real metrics from all expected clients
                 ready_clients = sum(
                     1 for sub in self.client_submissions 
                     if sub["metrics"] and len(sub["metrics"]) > 0
                 )
-                if ready_clients >= self.clients_per_round:
+                if ready_clients >= expected_clients:
                     self._aggregate_round()
                 
                 return {
@@ -658,6 +723,12 @@ class FLServer:
                     "submissions": len(self.client_submissions)
                 }
             
+            if model_weights is None:
+                return {
+                    "status": "error",
+                    "message": "No model weights provided for new submission"
+                }
+
             # New submission
             self.client_submissions.append({
                 "client_id": client_id,
@@ -679,8 +750,9 @@ class FLServer:
             else:
                 print(f"   ⏳ Waiting for real metrics from client {client_id}")
 
+            expected_clients = getattr(self, 'current_clients_expected', self.clients_per_round)
             print(f"   Received update from Client {client_id} "
-                  f"({len(self.client_submissions)}/{self.clients_per_round}) "
+                  f"({len(self.client_submissions)}/{expected_clients}) "
                   f"{'(REAL METRICS)' if has_real_metrics else '(placeholder)'}")
 
             # Only aggregate if we have REAL metrics from all expected clients
@@ -689,7 +761,7 @@ class FLServer:
                     1 for sub in self.client_submissions 
                     if sub["metrics"] and len(sub["metrics"]) > 0
                 )
-                if ready_clients >= self.clients_per_round:
+                if ready_clients >= expected_clients:
                     self._aggregate_round()
 
             return {
@@ -698,8 +770,35 @@ class FLServer:
                 "submissions": len(self.client_submissions)
             }
     
+    def _round_timeout(self):
+        """Called when round times out - aggregate with available clients"""
+        with self.lock:
+            if self.round_in_progress and len(self.client_submissions) >= max(1, self.current_clients_expected * 0.8):
+                print(f"\n⏰ Round {self.current_round} timed out after 5 minutes. "
+                      f"Aggregating with {len(self.client_submissions)}/{self.current_clients_expected} clients "
+                      f"(at least 80% received)")
+                self._aggregate_round()
+            elif self.round_in_progress and len(self.client_submissions) > 0:
+                print(f"\n⏰ Round {self.current_round} timed out after 5 minutes. "
+                      f"Aggregating with {len(self.client_submissions)}/{self.current_clients_expected} clients "
+                      f"(insufficient for 80% threshold)")
+                self._aggregate_round()
+            elif self.round_in_progress:
+                print(f"\n⏰ Round {self.current_round} timed out with no submissions. "
+                      f"Ending round without aggregation")
+                self.round_in_progress = False
+                self.client_submissions = []
+                if self.round_timer:
+                    self.round_timer.cancel()
+                    self.round_timer = None
+    
     def _aggregate_round(self):
         """Aggregate client updates using XFL strategy"""
+        # Cancel the timeout timer
+        if self.round_timer:
+            self.round_timer.cancel()
+            self.round_timer = None
+            
         xfl_info = self.aggregation_strategy.get_xfl_info()
         print(f"\nAggregating {len(self.client_submissions)} clients with XFL: {xfl_info['strategy']}")
 
@@ -787,6 +886,29 @@ class FLServer:
         self.round_in_progress = False
         self.client_submissions = []
         
+        # Apply pending model change if any
+        if self.pending_model_change is not None:
+            pending = self.pending_model_change
+            model_name = pending.get('model')
+            dataset = pending.get('dataset', self.current_dataset_name)
+            
+            if model_name:
+                current_model_name = type(self.global_model).__name__
+                # Use correct parameters for the selected model
+                num_classes, in_channels, input_size = get_model_params_for_dataset(model_name, dataset)
+                print(f"🔄 Server: Applying pending model change {current_model_name} → {model_name} for dataset {dataset}")
+                print(f"   Parameters: num_classes={num_classes}, in_channels={in_channels}, input_size={input_size}")
+                
+                self.global_model = create_model(model_name, num_classes=num_classes, 
+                                               in_channels=in_channels, input_size=input_size)
+                self.current_model_name = model_name
+            
+            if dataset != self.current_dataset_name:
+                print(f"🔄 Server: Applying pending dataset change {self.current_dataset_name} → {dataset}")
+                self.recreate_global_model(dataset, self.current_model_name)
+            
+            self.pending_model_change = None  # Clear the pending change
+        
         gc.collect()
         print(f"🧹 Garbage collection triggered after round {self.current_round}")
     
@@ -853,22 +975,27 @@ class FLServer:
             print(f"SERVER DEBUG: Total params sent={len(weights)}")
             return weights
     
-    def recreate_global_model(self, dataset_name: str):
-        """🔧 Recreate global model when dataset changes (EMNIST fix)"""
+    def recreate_global_model(self, dataset_name: str, model_name: str = None):
+        """🔧 Recreate global model when dataset or model changes"""
         try:
-            cfg = DATASET_CONFIG.get(dataset_name, ('SimpleCNN', 10, 1, 28))
-            model_name, num_classes, in_channels, input_size = cfg
+            # Use selected model or default for dataset
+            target_model_name = model_name if model_name else DATASET_CONFIG.get(dataset_name, ('SimpleCNN', 10, 1, 28))[0]
+            
+            # Get correct parameters for the target model
+            num_classes, in_channels, input_size = get_model_params_for_dataset(target_model_name, dataset_name)
             
             old_params = sum(p.numel() for p in self.global_model.parameters())
-            print(f"🔄 Recreating model: {self.current_dataset_name} ({old_params:,} params)")
-            print(f"   → {dataset_name}: {model_name}, {num_classes}cls, {in_channels}ch")
+            print(f"🔄 Recreating model: {self.current_dataset_name}/{type(self.global_model).__name__} ({old_params:,} params)")
+            print(f"   → {dataset_name}/{target_model_name}: {num_classes}cls, {in_channels}ch, {input_size}px")
             
-            self.global_model = create_model(model_name, num_classes, in_channels, input_size)
+            self.global_model = create_model(target_model_name, num_classes=num_classes, 
+                                           in_channels=in_channels, input_size=input_size)
             
             new_params = sum(p.numel() for p in self.global_model.parameters())
-            print(f"New model created: {new_params:,} params | Dataset: {dataset_name}")
+            print(f"New model created: {new_params:,} params | Dataset: {dataset_name} | Model: {target_model_name}")
             
             self.current_dataset_name = dataset_name
+            self.current_model_name = target_model_name
             
             # Recreate test_loader
             self.test_loader = DataLoader(
@@ -908,21 +1035,32 @@ class FLServer:
             except Exception as e:
                 print(f"WARNING: Warning: Could not get additional status from database: {e}")
             
+            current_clients_expected = getattr(self, 'current_clients_expected', self.clients_per_round)
+            selected_set = set(self.selected_clients if self.round_in_progress else [])
+            submitted_set = {sub["client_id"] for sub in self.client_submissions}
+            pending_clients = sorted(list(selected_set - submitted_set))
+
             return {
                 "current_round": self.current_round,
                 "total_rounds": self.num_rounds,
                 "round_in_progress": self.round_in_progress,
                 "submissions_received": len(self.client_submissions),
-                "clients_expected": self.clients_per_round,
+                "clients_expected": current_clients_expected,
+                "current_clients_expected": current_clients_expected,
                 "total_clients": total_clients,
                 "latest_accuracy": latest_accuracy,
-                "current_dataset": self.current_dataset_name,  # ← NEW
+                "current_dataset": self.current_dataset_name,
+                "model_name": self.current_model_name,
                 "submitted_clients": [sub["client_id"] for sub in self.client_submissions],
                 "selected_clients": self.selected_clients if self.round_in_progress else [],
+                "pending_clients": pending_clients,
+                "pending_clients_count": len(pending_clients),
                 "xfl_strategy": xfl_info['strategy'],
                 "xfl_param": xfl_info['param'],
                 "num_layers": num_layers,
-                "session_id": self.session_id        # ← expose for debugging
+                "session_id": self.session_id,
+                "cpu_limit": fl_config.get('cpuLimit', 100),
+                "ram_limit": fl_config.get('ramLimit', 2048)
             }
     
     def set_xfl_strategy(self, strategy: str, param: int = 3) -> Dict[str, Any]:
@@ -1029,13 +1167,49 @@ def save_config():
         fl_config['numRounds'] = int(data['numRounds'])
         print(f"Updated numRounds from {old_num_rounds} to {fl_server.num_rounds}")
     
-    # ← FIXED EMNIST: Recreate global_model when dataset changes
+    # Recreate global model when dataset changes
     if 'dataset' in data:
         new_dataset = data['dataset']
         if fl_server and new_dataset != fl_server.current_dataset_name:
-            print(f"🔄 Server: Dataset changed {fl_server.current_dataset_name} → {new_dataset}")
-            fl_server.recreate_global_model(new_dataset)
-    
+            if fl_server.round_in_progress:
+                print(f"⚠️ Server: Cannot change dataset from {fl_server.current_dataset_name} to {new_dataset} - round in progress")
+                print("   Dataset change will be applied after current round completes")
+                # Store the pending dataset change
+                if fl_server.pending_model_change is None:
+                    fl_server.pending_model_change = {}
+                fl_server.pending_model_change['dataset'] = new_dataset
+            else:
+                new_model = data.get('model', None)  # Get selected model if provided
+                print(f"🔄 Server: Dataset changed {fl_server.current_dataset_name} → {new_dataset}")
+                fl_server.recreate_global_model(new_dataset, new_model)
+
+    # Recreate global model when selected model changes
+    if 'model' in data:
+        new_model = data['model']
+        if fl_server:
+            current_model_name = type(fl_server.global_model).__name__
+            current_dataset = data.get('dataset', fl_server.current_dataset_name)
+            if new_model != current_model_name:
+                # Only allow model change if no round is in progress
+                if fl_server.round_in_progress:
+                    print(f"⚠️ Server: Cannot change model from {current_model_name} to {new_model} - round in progress")
+                    print("   Model change will be applied after current round completes")
+                    # Store the pending model change
+                    fl_server.pending_model_change = {
+                        'model': new_model,
+                        'dataset': current_dataset
+                    }
+                else:
+                    dataset = data.get('dataset', fl_server.current_dataset_name)
+                    # Use correct parameters for the selected model
+                    num_classes, in_channels, input_size = get_model_params_for_dataset(new_model, dataset)
+                    print(f"🔄 Server: Model changed {current_model_name} → {new_model} for dataset {dataset}")
+                    print(f"   Parameters: num_classes={num_classes}, in_channels={in_channels}, input_size={input_size}")
+                    fl_server.global_model = create_model(new_model, num_classes=num_classes,
+                                                         in_channels=in_channels, input_size=input_size)
+                    fl_server.current_model_name = new_model
+                print(f"✅ Server: Global model recreated as {new_model}")
+
     return jsonify({"status": "success", "message": "Configuration saved", "config": fl_config})
 
 
@@ -1165,7 +1339,22 @@ def get_global_model():
     xfl_info = fl_server.aggregation_strategy.get_xfl_info()
 
     dataset_name = fl_config.get('dataset', 'MNIST')
+    model_name = fl_config.get('model', 'SimpleCNN')  # Get model from config
     data_distribution = fl_config.get('dataDistribution', 'iid')
+    num_clients = fl_config.get('numClients', 40)
+    batch_size = fl_config.get('batchSize', 32)
+    local_epochs = fl_config.get('localEpochs', 1)
+    learning_rate = fl_config.get('learningRate', 0.01)
+    network_latency = fl_config.get('networkLatency', 0)
+    network_bandwidth = fl_config.get('networkBandwidth', 10)
+    network_packet_loss = fl_config.get('networkPacketLoss', 0)
+    cpu_limit = fl_config.get('cpuLimit', 100)
+    ram_limit = fl_config.get('ramLimit', 2048)
+    simulate_constraints = fl_config.get('simulateConstraints', False)
+
+    # Always send the server's actual active model and dataset
+    dataset_name = fl_server.current_dataset_name
+    model_name = fl_server.current_model_name
 
     return jsonify({
         "weights": weights_b64,
@@ -1175,7 +1364,18 @@ def get_global_model():
         "sparsification_threshold": xfl_info.get('sparsification_threshold', 0.01),
         "quantization_bits": xfl_info.get('quantization_bits', 8),
         "dataset_name": dataset_name,
-        "data_distribution": data_distribution
+        "model_name": model_name,  # Send active server model name to client
+        "data_distribution": data_distribution,
+        "num_clients": num_clients,
+        "batch_size": batch_size,
+        "local_epochs": local_epochs,
+        "learning_rate": learning_rate,
+        "network_latency_ms": network_latency,
+        "network_bandwidth_mbps": network_bandwidth,
+        "network_packet_loss_rate": network_packet_loss,
+        "cpu_limit": cpu_limit,
+        "ram_limit": ram_limit,
+        "simulate_constraints": simulate_constraints
     })
 
 
@@ -1200,11 +1400,18 @@ def submit_update():
         print(f"   energy_wh: {client_metrics.get('energy_wh')}")
         print(f"   bytes_sent: {client_metrics.get('bytes_sent')}")
 
-    if client_id is None or weights_b64 is None or num_samples is None:
-        return jsonify({"error": "Missing required fields"}), 400
-    # Décodage des poids
-    weights = base64_to_weights(weights_b64)
-    # Stockage
+    if client_id is None:
+        return jsonify({"error": "client_id required"}), 400
+
+    weights = None
+    if weights_b64 is not None:
+        weights = base64_to_weights(weights_b64)
+
+    if weights is None and not client_metrics:
+        return jsonify({"error": "Missing weights or metrics"}), 400
+
+    num_samples = num_samples if num_samples is not None else 0
+
     result = fl_server.submit_client_update(
         client_id=client_id,
         model_weights=weights,
@@ -1948,6 +2155,14 @@ def create_server(
                 fl_server.num_rounds = int(saved_config['numRounds'])
                 print(f"Updated numRounds from {old_num_rounds} to {fl_server.num_rounds} from saved config")
             
+            if 'dataset' in saved_config or 'model' in saved_config:
+                dataset_name = saved_config.get('dataset', fl_server.current_dataset_name)
+                model_name = saved_config.get('model', fl_server.current_model_name)
+                if (dataset_name != fl_server.current_dataset_name or
+                        model_name != fl_server.current_model_name):
+                    print(f"🔄 Restoring saved server model from DB: {dataset_name}/{model_name}")
+                    fl_server.recreate_global_model(dataset_name, model_name)
+
             if 'strategy' in saved_config:
                 strategy = saved_config.get('strategy', 'all_layers')
                 param = saved_config.get('xflParam', 3)
@@ -2035,6 +2250,53 @@ def receive_physical_metrics(client_id):
         if _physical_client_manager:
             _physical_client_manager.update_client_metrics(client_id, metrics)
         return jsonify({'status': 'metrics_received'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/physical/heartbeat', methods=['POST'])
+def physical_client_heartbeat():
+    """Receive heartbeat from a physical client"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No JSON data provided'}), 400
+
+        client_id = data.get('client_id')
+        status = data.get('status', 'connected')
+        round_number = data.get('round_number', 0)
+
+        if client_id is None:
+            return jsonify({'error': 'client_id required'}), 400
+
+        if _physical_client_manager:
+            updated = _physical_client_manager.update_client_status(
+                client_id=client_id,
+                status=status,
+                round_number=round_number
+            )
+            if updated:
+                return jsonify({
+                    'status': 'heartbeat_received',
+                    'client_id': client_id,
+                    'client_status': status,
+                    'round_number': round_number
+                }), 200
+            return jsonify({'error': 'Client not registered'}), 404
+
+        return jsonify({'error': 'Physical manager not initialized'}), 500
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/physical/active', methods=['GET'])
+def get_active_physical_clients():
+    """Get active physical clients"""
+    try:
+        if _physical_client_manager:
+            active = _physical_client_manager.get_active_clients()
+            return jsonify({'active_clients': active, 'count': len(active)}), 200
+        return jsonify({'active_clients': [], 'count': 0}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

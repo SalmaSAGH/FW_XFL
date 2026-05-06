@@ -4,8 +4,11 @@ import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, R
 import { 
   getStatus, 
   getConfig,
+  getAccuracyData,
+  getCpuData,
   getClientsData, 
   getBandwidthData,
+  getThroughputData,
   getLatencyData,
   getEnergyData,
   getNetworkMetricsData,
@@ -18,10 +21,13 @@ import {
 
 function Dashboard() {
   const navigate = useNavigate();
-  const [status, setStatus] = useState({});
+const [status, setStatus] = useState({});
   const [config, setConfig] = useState({});
   const [clients, setClients] = useState([]);
+  const [accuracyData, setAccuracyData] = useState({ rounds: [], accuracy: [] });
+  const [cpuData, setCpuData] = useState({ rounds: [], cpu: [] });
   const [bandwidthData, setBandwidthData] = useState({ rounds: [], bandwidth_mb: [] });
+  const [throughputData, setThroughputData] = useState({ rounds: [], throughput_mbps: [] });
   const [latencyData, setLatencyData] = useState({ rounds: [], latency: [] });
   const [energyData, setEnergyData] = useState({ rounds: [], energy: [] });
   const [networkMetrics, setNetworkMetrics] = useState({ rounds: [], packet_loss: [], jitter: [] });
@@ -69,14 +75,28 @@ function Dashboard() {
     try {
       setDataError(false);
       
-      // Fetch all data with individual error handling to preserve data on partial failures
-      let statusRes, accuracyRes, lossRes, clientsRes, bandwidthRes, latencyRes, energyRes, networkRes, historyRes;
+// Fetch all data with individual error handling to preserve data on partial failures
+      let statusRes, accuracyRes, lossRes, clientsRes, cpuRes, bandwidthRes, latencyRes, energyRes, networkRes, historyRes;
       
       try {
         statusRes = await getStatus();
       } catch (e) {
         console.warn('Status fetch failed:', e.message);
         statusRes = { data: null };
+      }
+      
+      try {
+        accuracyRes = await getAccuracyData();
+      } catch (e) {
+        console.warn('Accuracy fetch failed:', e.message);
+        accuracyRes = { data: null };
+      }
+      
+      try {
+        cpuRes = await getCpuData();
+      } catch (e) {
+        console.warn('CPU fetch failed:', e.message);
+        cpuRes = { data: null };
       }
       
 
@@ -93,6 +113,14 @@ function Dashboard() {
       } catch (e) {
         console.warn('Bandwidth fetch failed:', e.message);
         bandwidthRes = { data: null };
+      }
+      
+      let throughputRes;
+      try {
+        throughputRes = await getThroughputData();
+      } catch (e) {
+        console.warn('Throughput fetch failed:', e.message);
+        throughputRes = { data: null };
       }
       
       try {
@@ -163,8 +191,18 @@ function Dashboard() {
         // Strategy is now read directly from status.xfl_strategy in the render
       }
 
-      // FIXED: Only update metrics data if we have valid data with actual content - preserve existing data
+// FIXED: Only update metrics data if we have valid data with actual content - preserve existing data
 
+      
+      // Accuracy data - check for non-empty rounds array
+      if (accuracyRes && accuracyRes.data && accuracyRes.data.rounds && accuracyRes.data.rounds.length > 0) {
+        setAccuracyData(accuracyRes.data);
+      }
+      
+      // CPU data - check for non-empty rounds array
+      if (cpuRes && cpuRes.data && cpuRes.data.rounds && cpuRes.data.rounds.length > 0) {
+        setCpuData(cpuRes.data);
+      }
       
       // Clients data - check for non-empty clients array
       if (clientsRes && clientsRes.data && clientsRes.data.clients && clientsRes.data.clients.length > 0) {
@@ -174,6 +212,11 @@ function Dashboard() {
       // Bandwidth data - check for non-empty rounds array
       if (bandwidthRes && bandwidthRes.data && bandwidthRes.data.rounds && bandwidthRes.data.rounds.length > 0) {
         setBandwidthData(bandwidthRes.data);
+      }
+      
+      // Throughput data - check for non-empty rounds array
+      if (throughputRes && throughputRes.data && throughputRes.data.rounds && throughputRes.data.rounds.length > 0) {
+        setThroughputData(throughputRes.data);
       }
       
       // Latency data - check for non-empty rounds array
@@ -278,9 +321,24 @@ function Dashboard() {
     }
   };
 
-  const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
+const accuracyChartData = accuracyData.rounds.map((round, idx) => ({
+    round,
+    accuracy: accuracyData.accuracy[idx]
+  }));
+
+  const cpuChartData = cpuData.rounds.map((round, idx) => ({
+    round,
+    cpu: cpuData.cpu[idx]
+  }));
+
+const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
     round,
     bandwidth: bandwidthData.bandwidth_mb[idx]
+  }));
+
+  const throughputChartData = throughputData.rounds.map((round, idx) => ({
+    round,
+    throughput: throughputData.throughput_mbps[idx]
   }));
 
   const latencyChartData = latencyData.rounds.map((round, idx) => ({
@@ -397,7 +455,7 @@ function Dashboard() {
           </div>
         )}
 
-        {/* Status Cards Row */}
+{/* Status Cards Row */}
         <div className="grid-4" style={{ marginBottom: '20px' }}>
           <div className="info-card">
             <div className="info-label">Current Round</div>
@@ -419,7 +477,7 @@ function Dashboard() {
           </div>
         </div>
 
-        {/* Current Configuration Parameters Display */}
+{/* Current Configuration Parameters Display */}
         <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #ab47bc' }}>
           <h2 className="panel-title">⚙️ Current Configuration</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px', marginTop: '15px' }}>
@@ -448,7 +506,7 @@ function Dashboard() {
               <div style={{ fontSize: '12px', fontWeight: '600', color: '#66bb6a', marginBottom: '8px' }}>📊 Data</div>
               <div style={{ fontSize: '11px', color: '#888' }}>Dataset: <span style={{ color: '#fff' }}>{config.dataset || 'MNIST'}</span></div>
               <div style={{ fontSize: '11px', color: '#888' }}>Distribution: <span style={{ color: '#fff' }}>{config.dataDistribution === 'iid' ? 'IID' : 'Non-IID'}</span></div>
-              <div style={{ fontSize: '11px', color: '#888' }}>Rounds: <span style={{ color: '#fff' }}>{config.numRounds || 50}</span></div>
+              <div style={{ fontSize: '11px', color: '#888' }}>Model: <span style={{ color: '#fff' }}>{config.model || SimpleCNN}</span></div>
             </div>
           </div>
         </div>
@@ -522,7 +580,7 @@ function Dashboard() {
                   </div>
                   {client && (
                     <div style={{ fontSize: '7px', color: 'rgba(255,255,255,0.6)', marginTop: '4px' }}>
-                      CPU: {client.avg_cpu || 0}%
+                      CPU: {client.avg_cpu || 0}% | RAM: {client.avg_memory || 0} MB
                     </div>
                   )}
                 </div>
@@ -533,7 +591,7 @@ function Dashboard() {
 
 
 
-        {/* Charts Row 2 */}
+{/* Charts Row 2 */}
         <div className="grid-3" style={{ marginBottom: '20px' }}>
           <div className="card">
             <h2 className="panel-title">📊 Bandwidth Usage (MB)</h2>
@@ -550,6 +608,28 @@ function Dashboard() {
                   type="monotone" 
                   dataKey="bandwidth" 
                   stroke="#4fc3f7" 
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="card">
+            <h2 className="panel-title">🚀 Network Throughput (Mbps)</h2>
+            <ResponsiveContainer width="100%" height={150}>
+              <LineChart data={throughputChartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2d3348" />
+                <XAxis dataKey="round" stroke="#888" fontSize={10} />
+                <YAxis stroke="#888" fontSize={10} />
+                <Tooltip 
+                  contentStyle={{ background: '#252942', border: '1px solid #2d3348' }}
+                  labelStyle={{ color: '#fff' }}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="throughput" 
+                  stroke="#66bb6a" 
                   strokeWidth={2}
                   dot={false}
                 />
@@ -578,6 +658,53 @@ function Dashboard() {
               </LineChart>
             </ResponsiveContainer>
           </div>
+        </div>
+
+        {/* Charts Row 3 - Model Accuracy, CPU Usage and Energy */}
+        <div className="grid-3" style={{ marginBottom: '20px' }}>
+          <div className="card">
+            <h2 className="panel-title">🎯 Model Accuracy (%)</h2>
+            <ResponsiveContainer width="100%" height={150}>
+              <LineChart data={accuracyChartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2d3348" />
+                <XAxis dataKey="round" stroke="#888" fontSize={10} />
+                <YAxis stroke="#888" fontSize={10} domain={[0, 100]} />
+                <Tooltip 
+                  contentStyle={{ background: '#252942', border: '1px solid #2d3348' }}
+                  labelStyle={{ color: '#fff' }}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="accuracy" 
+                  stroke="#66bb6a" 
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          <div className="card">
+            <h2 className="panel-title">💻 CPU Usage (%)</h2>
+            <ResponsiveContainer width="100%" height={150}>
+              <LineChart data={cpuChartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#2d3348" />
+                <XAxis dataKey="round" stroke="#888" fontSize={10} />
+                <YAxis stroke="#888" fontSize={10} domain={[0, 100]} />
+                <Tooltip 
+                  contentStyle={{ background: '#252942', border: '1px solid #2d3348' }}
+                  labelStyle={{ color: '#fff' }}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="cpu" 
+                  stroke="#ffa726" 
+                  strokeWidth={2}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
 
           <div className="card">
             <h2 className="panel-title">⚡ Energy Consumption (Wh)</h2>
@@ -593,7 +720,7 @@ function Dashboard() {
                 <Line 
                   type="monotone" 
                   dataKey="energy" 
-                  stroke="#66bb6a" 
+                  stroke="#ab47bc" 
                   strokeWidth={2}
                   dot={false}
                 />

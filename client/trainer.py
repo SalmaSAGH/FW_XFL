@@ -103,7 +103,7 @@ class LocalTrainer:
         accuracy = 100. * correct / total if total > 0 else 0
         
         if verbose:
-            print(f"✅ Training completed in {training_time:.2f}s")
+            print(f"Training completed in {training_time:.2f}s")
             print(f"   Loss: {avg_loss:.4f}, Accuracy: {accuracy:.2f}%")
         
         return {

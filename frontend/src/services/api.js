@@ -56,8 +56,10 @@ export const exportData = () => api.get('/export');
 // Metrics APIs
 export const getAccuracyData = () => api.get('/accuracy');
 export const getLossData = () => api.get('/loss');
+export const getCpuData = () => api.get('/cpu');
 export const getClientsData = () => api.get('/clients');
 export const getBandwidthData = (params) => api.get('/bandwidth', { params });
+export const getThroughputData = (params) => api.get('/throughput', { params });
 export const getLatencyData = (params) => api.get('/latency', { params });
 export const getEnergyData = (params) => api.get('/energy', { params });
 export const getNetworkMetricsData = (params) => api.get('/network_metrics', { params });

@@ -78,9 +78,12 @@ class DatasetPartitioner:
 
     def get_client_dataset(self, client_id: int) -> Subset:
         if client_id >= self.num_clients:
-            raise ValueError(
-                f"Client ID {client_id} exceeds num_clients {self.num_clients}"
+            mapped_client_id = client_id % self.num_clients
+            print(
+                f"WARNING: client_id {client_id} exceeds num_clients {self.num_clients}. "
+                f"Mapping to partition {mapped_client_id} instead."
             )
+            client_id = mapped_client_id
         return Subset(self.dataset, self.client_indices[client_id])
 
 

@@ -53,7 +53,25 @@ class MetricsCollector:
         }.items():
             if legacy_key in self.network_config:
                 self.energy_config[new_key] = self.network_config[legacy_key]
+    
+    def update_network_config(self, new_network_config: Dict[str, Any]):
+        """
+        Update network configuration parameters
         
+        Args:
+            new_network_config: New network configuration dictionary
+        """
+        if new_network_config:
+            self.network_config.update(new_network_config)
+            # Update energy config if network config has energy parameters
+            for legacy_key, new_key in {
+                "energy_per_bit_joules": "network_energy_per_bit_joules",
+                "cpu_idle_watts": "cpu_idle_watts",
+                "cpu_peak_watts": "cpu_peak_watts"
+            }.items():
+                if legacy_key in self.network_config:
+                    self.energy_config[new_key] = self.network_config[legacy_key]
+    
     def start_collection(self):
         """Start metrics collection"""
         self.start_time = time.time()
