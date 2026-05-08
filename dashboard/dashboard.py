@@ -278,8 +278,7 @@ class DashboardServer:
                     cursor.execute("""
                         SELECT cm.round_number, AVG(cm.cpu_percent) as avg_cpu
                         FROM client_metrics cm 
-                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
-                        WHERE rm.session_id = %s AND cm.cpu_percent IS NOT NULL
+                        WHERE (cm.session_id = %s OR cm.session_id IS NULL) AND cm.cpu_percent IS NOT NULL
                         GROUP BY cm.round_number 
                         ORDER BY cm.round_number
                     """, (session_id,))
@@ -416,18 +415,24 @@ class DashboardServer:
                 cursor = conn.cursor()
                 session_id = self._get_active_session_id()
                 if session_id:
-                    # FIX: Show metrics for all rounds with client submissions, not just evaluated rounds
+                    # FIXED: Calculate real bandwidth = data_size / transmission_time (in MB/s)
                     cursor.execute("""
-                        SELECT cm.round_number, AVG(cm.bytes_sent / 1048576.0) as avg_bw_mb
+                        SELECT cm.round_number,
+                               AVG(
+                                   CASE
+                                       WHEN cm.transmission_time_sec > 0 THEN
+                                           (cm.bytes_sent / 1048576.0) / cm.transmission_time_sec
+                                       ELSE 0
+                                   END
+                               ) as avg_bandwidth_mb_per_sec
                         FROM client_metrics cm 
-                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
-                        WHERE rm.session_id = %s
+                        WHERE (cm.session_id = %s OR cm.session_id IS NULL)
                         GROUP BY cm.round_number 
                         ORDER BY cm.round_number
                     """, (session_id,))
                 else:
                     cursor.execute("""
-                        SELECT round_number, 0.0 as avg_bw_mb 
+                        SELECT round_number, 0.0 as avg_bandwidth_mb_per_sec 
                         FROM round_metrics 
                         WHERE session_id IS NULL 
                         LIMIT 1
@@ -449,13 +454,18 @@ class DashboardServer:
                 session_id = self._get_active_session_id()
                 if session_id:
                     cursor.execute("""
-                        SELECT cm.round_number, 
-                               AVG(CASE WHEN cm.transmission_time_sec > 0 
-                                   THEN (cm.bytes_sent * 8.0) / (cm.transmission_time_sec * 1000000) 
-                                   ELSE 0 END) as avg_throughput_mbps
+                        SELECT cm.round_number,
+                               AVG(
+                                   CASE
+                                       WHEN cm.metrics_json ? 'throughput_mbps' THEN
+                                           (cm.metrics_json->>'throughput_mbps')::double precision
+                                       WHEN cm.transmission_time_sec > 0 THEN
+                                           (cm.bytes_sent * 8.0) / (cm.transmission_time_sec * 1000000)
+                                       ELSE 0
+                                   END
+                               ) as avg_throughput_mbps
                         FROM client_metrics cm 
-                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
-                        WHERE rm.session_id = %s
+                        WHERE (cm.session_id = %s OR cm.session_id IS NULL)
                         GROUP BY cm.round_number 
                         ORDER BY cm.round_number
                     """, (session_id,))
@@ -486,8 +496,7 @@ class DashboardServer:
                     cursor.execute("""
                         SELECT cm.round_number, AVG(cm.latency_ms)
                         FROM client_metrics cm 
-                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
-                        WHERE rm.session_id = %s
+                        WHERE (cm.session_id = %s OR cm.session_id IS NULL)
                         GROUP BY cm.round_number 
                         ORDER BY cm.round_number
                     """, (session_id,))
@@ -513,8 +522,7 @@ class DashboardServer:
                     cursor.execute("""
                         SELECT cm.round_number, AVG(cm.energy_wh)
                         FROM client_metrics cm 
-                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
-                        WHERE rm.session_id = %s
+                        WHERE (cm.session_id = %s OR cm.session_id IS NULL)
                         GROUP BY cm.round_number 
                         ORDER BY cm.round_number
                     """, (session_id,))
@@ -539,8 +547,7 @@ class DashboardServer:
                     cursor.execute("""
                         SELECT cm.round_number, AVG(cm.memory_mb)
                         FROM client_metrics cm
-                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number
-                        WHERE rm.session_id = %s
+                        WHERE (cm.session_id = %s OR cm.session_id IS NULL)
                         GROUP BY cm.round_number
                         ORDER BY cm.round_number
                     """, (session_id,))
@@ -568,8 +575,7 @@ class DashboardServer:
                                COALESCE(AVG(cm.packet_loss_rate), 0.0) as avg_packet_loss,
                                COALESCE(AVG(cm.jitter_ms), 0.0) as avg_jitter
                         FROM client_metrics cm 
-                        INNER JOIN round_metrics rm ON cm.round_number = rm.round_number 
-                        WHERE rm.session_id = %s
+                        WHERE (cm.session_id = %s OR cm.session_id IS NULL)
                         GROUP BY cm.round_number 
                         ORDER BY cm.round_number
                     """, (session_id,))

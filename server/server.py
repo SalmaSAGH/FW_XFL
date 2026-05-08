@@ -703,7 +703,8 @@ class FLServer:
                     self.metrics_collector.store_client_metrics(
                         self.current_round,
                         client_id,
-                        client_metrics
+                        client_metrics,
+                        session_id=self.session_id
                     )
 
                 expected_clients = getattr(self, 'current_clients_expected', self.clients_per_round)
@@ -744,7 +745,8 @@ class FLServer:
                 self.metrics_collector.store_client_metrics(
                     self.current_round,
                     client_id,
-                    client_metrics
+                    client_metrics,
+                    session_id=self.session_id
                 )
                 print(f"   💾 Stored REAL metrics in DB for client {client_id}")
             else:

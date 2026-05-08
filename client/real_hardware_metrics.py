@@ -4,9 +4,11 @@ Collects real metrics from Raspberry Pi hardware (CPU, memory, network, energy)
 """
 
 import re
+from urllib.parse import urlparse
 
 import numpy as np
 import psutil
+import requests
 import time
 import subprocess
 import threading
@@ -175,30 +177,35 @@ class RealHardwareMetricsCollector:
         if not self.server_url:
             print(f"[PING] No server URL configured")
             return {'latency_ms': 50.0, 'jitter_ms': 5.0, 'packet_loss_rate': 0.01}
-        
-        host = self.server_url.split('//')[1].split('/')[0]  # Extract host
+
+        parsed = urlparse(self.server_url)
+        host = parsed.hostname
+        if not host:
+            print(f"[PING] Invalid server URL: {self.server_url}")
+            return {'latency_ms': 50.0, 'jitter_ms': 5.0, 'packet_loss_rate': 0.01}
+
         print(f"[PING] Pinging {host} with {count} packets...")
-        
+
         try:
             # Try Linux-style ping first
-            result = subprocess.run(['ping', '-c', str(count), host], 
-                                  capture_output=True, text=True, timeout=10)
+            result = subprocess.run(['ping', '-c', str(count), host],
+                                    capture_output=True, text=True, timeout=15)
             print(f"[PING] Return code: {result.returncode}")
             print(f"[PING] stdout: {result.stdout[:200]}")
             print(f"[PING] stderr: {result.stderr[:200]}")
-            
+
             if result.returncode == 0:
                 rtts = []
                 for line in result.stdout.splitlines():
-                    if '/64 ' in line or 'time=' in line:  # Linux/Windows ping formats
+                    if 'time=' in line:
                         match = re.search(r'time[=<]?(\d+(?:\.\d+)?)', line)
                         if match:
                             rtts.append(float(match.group(1)))
                             print(f"[PING] Found RTT: {match.group(1)} ms")
-                
+
                 if rtts:
-                    jitter = np.std(rtts) if len(rtts) > 1 else 1.0
-                    latency = np.mean(rtts)
+                    jitter = float(np.std(rtts)) if len(rtts) > 1 else 1.0
+                    latency = float(np.mean(rtts))
                     print(f"[PING] Success! latency={latency:.2f}ms, jitter={jitter:.2f}ms")
                     return {
                         'latency_ms': latency,
@@ -211,8 +218,26 @@ class RealHardwareMetricsCollector:
                 print(f"[PING] Ping failed with return code {result.returncode}")
         except Exception as e:
             print(f"[PING] Exception: {type(e).__name__}: {e}")
-        
-        # Fallback: return realistic values instead of zeros
+
+        # Fallback: measure HTTP round-trip time to the server API if ping fails
+        try:
+            status_url = self.server_url.rstrip('/') + '/api/status'
+            print(f"[PING] Falling back to HTTP request: {status_url}")
+            start = time.perf_counter()
+            response = requests.get(status_url, timeout=5)
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            if response.status_code == 200:
+                print(f"[PING] HTTP latency measured: {elapsed_ms:.2f}ms")
+                return {
+                    'latency_ms': round(elapsed_ms, 2),
+                    'jitter_ms': 0.0,
+                    'packet_loss_rate': 0.0
+                }
+            else:
+                print(f"[PING] HTTP fallback returned status {response.status_code}")
+        except Exception as e:
+            print(f"[PING] HTTP fallback exception: {type(e).__name__}: {e}")
+
         print(f"[PING] Using fallback values")
         return {'latency_ms': 50.0, 'jitter_ms': 5.0, 'packet_loss_rate': 0.01}
         
@@ -521,30 +546,34 @@ class RealHardwareMetricsCollector:
         ping_metrics = self._ping_server(count=3)
         net_values = list(self.network_history)
         
-        if net_values:
-            # Network metrics are nested under 'network' key - extract properly
-            def get_net_value(h, key, default=0):
-                return h.get('network', {}).get(key, default) if isinstance(h, dict) else default
-            
-            avg_bytes_sent = sum(get_net_value(h, 'bytes_sent', 0) for h in net_values) / len(net_values)
-            avg_bytes_received = sum(get_net_value(h, 'bytes_received', 0) for h in net_values) / len(net_values)
-            
-            # Packet loss from dropin/errin history (nested under 'network' key)
+        if len(net_values) >= 2:
+            # Network history items store flat keys
+            first = net_values[0]
+            last = net_values[-1]
+            duration = last['timestamp'] - first['timestamp']
+
+            if duration > 0:
+                avg_bytes_sent = max((last.get('bytes_sent', 0) - first.get('bytes_sent', 0)) / duration, 0)
+                avg_bytes_received = max((last.get('bytes_received', 0) - first.get('bytes_received', 0)) / duration, 0)
+            else:
+                avg_bytes_sent = max(last.get('bytes_sent', 0), 0)
+                avg_bytes_received = max(last.get('bytes_received', 0), 0)
+
             total_packets = sum(
-                get_net_value(h, 'packets_sent', 0) + get_net_value(h, 'packets_received', 0) 
+                h.get('packets_sent', 0) + h.get('packets_received', 0)
                 for h in net_values
             )
             total_drops = sum(
-                get_net_value(h, 'dropin', 0) + get_net_value(h, 'errin', 0) 
+                h.get('dropin', 0) + h.get('errin', 0)
                 for h in net_values
             )
             packet_loss_rate = total_drops / max(total_packets, 1)
         else:
             # No network data collected yet - use realistic defaults
-            avg_bytes_sent = 1024 * 100  # 100 KB default
-            avg_bytes_received = 1024 * 50   # 50 KB default
+            avg_bytes_sent = 1024 * 100  # 100 KB/s default
+            avg_bytes_received = 1024 * 50   # 50 KB/s default
             packet_loss_rate = 0.01  # 1% default
-        
+
         avg_bandwidth_mbps = max(avg_bytes_sent * 8 / 1e6, 0.5)  # Min realistic
         
         # Energy - calculate from current round duration

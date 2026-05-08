@@ -397,8 +397,10 @@ class FLClient:
                     'memory_mb': real_summary.get('memory', {}).get('avg_mb', 0),
                     'temperature_celsius': real_summary.get('temperature', {}).get('avg_celsius'),
                     'energy_wh': real_summary.get('energy', {}).get('total_wh', 0),
+                    'latency_ms': real_summary.get('network', {}).get('avg_latency_ms', 0),
                     'jitter_ms': real_summary.get('network', {}).get('avg_jitter_ms', 0),
                     'packet_loss_rate': real_summary.get('network', {}).get('packet_loss_rate', 0),
+                    'throughput_mbps': real_summary.get('network', {}).get('avg_bandwidth_mbps', 0),
                     'is_real_measurement': True
                 }
             else:
@@ -412,15 +414,15 @@ class FLClient:
                     'is_real_measurement': True
                 }
 
-            payload = {
+            placeholder_payload = {
                 "client_id": self.client_id,
                 "weights": self._weights_to_base64(weights_to_send),
                 "num_samples": num_samples,
-                "metrics": metrics_payload
+                "metrics": {}
             }
 
             if hasattr(self, '_quantization_meta') and self._quantization_meta:
-                payload["quantization_meta"] = self._quantization_meta
+                placeholder_payload["quantization_meta"] = self._quantization_meta
                 delattr(self, '_quantization_meta')
 
             tx_timeout = 180
@@ -435,7 +437,7 @@ class FLClient:
                 try:
                     response = requests.post(
                         f"{self.server_url}/api/submit_update",
-                        json=payload,
+                        json=placeholder_payload,
                         timeout=tx_timeout
                     )
                     break
@@ -455,18 +457,63 @@ class FLClient:
 
             tx_time = time.perf_counter() - start_tx
             tx_latency_ms = tx_time * 1000  # Real end-to-end latency
+            if model_size_bytes and tx_time > 0:
+                measured_throughput_mbps = (model_size_bytes * 8) / (tx_time * 1_000_000)
+            else:
+                measured_throughput_mbps = 0.0
+
+            # After upload, send the real metrics update so the server stores the true transmission time
+            metrics_payload['transmission_time_sec'] = tx_time
+            metrics_payload['throughput_mbps'] = round(measured_throughput_mbps, 6)
+            metrics_payload['tx_latency_ms'] = tx_latency_ms
+
+            metrics_update_payload = {
+                "client_id": self.client_id,
+                "num_samples": num_samples,
+                "metrics": metrics_payload
+            }
+
+            update_response = None
+            update_error = None
+            for attempt in range(max_retries):
+                try:
+                    update_response = requests.post(
+                        f"{self.server_url}/api/submit_update",
+                        json=metrics_update_payload,
+                        timeout=tx_timeout
+                    )
+                    break
+                except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                    update_error = e
+                    if attempt < max_retries - 1:
+                        print(f"   ⚠️ Metrics update attempt {attempt + 1}/{max_retries} failed: {e}")
+                        print("   ⏳ Retrying metrics update in 5s...")
+                        time.sleep(retry_delay)
+                    else:
+                        print(f"   ❌ Metrics update failed after {max_retries} attempts")
+
+            if update_response is None:
+                print(f"Client {self.client_id}: ❌ metrics submit_update failed: {update_error}")
+                self._cleanup_memory()
+                return False
 
             if response.status_code != 200:
-                print(f"Client {self.client_id}: ❌ submit_update returned "
+                print(f"Client {self.client_id}: ❌ initial submit_update returned "
                       f"{response.status_code}: {response.text[:200]}")
                 return False
 
-            result = response.json()
+            if update_response.status_code != 200:
+                print(f"Client {self.client_id}: ❌ metrics submit_update returned "
+                      f"{update_response.status_code}: {update_response.text[:200]}")
+                return False
+
+            result = update_response.json()
 
             if verbose:
                 print(f"Client {self.client_id}: ✅ Submitted | "
                       f"{result.get('submissions')} updates received by server | "
-                      f"Real tx_time={tx_time:.3f}s | latency={tx_latency_ms:.1f}ms")
+                      f"Real tx_time={tx_time:.3f}s | latency={tx_latency_ms:.1f}ms | "
+                      f"throughput={metrics_payload['throughput_mbps']:.3f} Mbps")
 
             self._cleanup_memory()
             return True

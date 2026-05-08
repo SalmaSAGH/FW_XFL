@@ -294,6 +294,7 @@ class ServerMetricsCollector:
                 id SERIAL PRIMARY KEY,
                 round_number INTEGER NOT NULL,
                 client_id INTEGER NOT NULL,
+                session_id TEXT,
                 timestamp REAL NOT NULL,
                 training_loss REAL,
                 training_accuracy REAL,
@@ -310,6 +311,7 @@ class ServerMetricsCollector:
                 energy_joules REAL,
                 energy_wh REAL,
                 avg_power_watts REAL,
+                transmission_time_sec REAL,
                 metrics_json JSONB
             )
         """)
@@ -319,6 +321,7 @@ class ServerMetricsCollector:
         cursor.execute("ALTER TABLE client_metrics ADD COLUMN IF NOT EXISTS energy_wh REAL")
         cursor.execute("ALTER TABLE client_metrics ADD COLUMN IF NOT EXISTS avg_power_watts REAL")
         cursor.execute("ALTER TABLE client_metrics ADD COLUMN IF NOT EXISTS transmission_time_sec REAL")
+        cursor.execute("ALTER TABLE client_metrics ADD COLUMN IF NOT EXISTS session_id TEXT")
 
         conn.commit()
         conn.close()
@@ -412,7 +415,7 @@ class ServerMetricsCollector:
         finally:
             self._return_connection(conn)
     
-    def store_client_metrics(self, round_number: int, client_id: int, client_metrics: Dict[str, Any]):
+    def store_client_metrics(self, round_number: int, client_id: int, client_metrics: Dict[str, Any], session_id: str = None):
         """Store metrics from a single client with retry logic"""
         
         # DEBUG: Log what we're receiving
@@ -474,11 +477,11 @@ class ServerMetricsCollector:
             model = client_metrics.get('model', {})
             
             cursor.execute("""
-                INSERT INTO client_metrics (round_number, client_id, timestamp, training_loss, training_accuracy,
+                INSERT INTO client_metrics (round_number, client_id, session_id, timestamp, training_loss, training_accuracy,
                  training_time_sec, num_samples, model_size_mb, cpu_percent, memory_mb, bytes_sent, bytes_received,
                  latency_ms, packet_loss_rate, jitter_ms, energy_joules, energy_wh, avg_power_watts, transmission_time_sec, metrics_json)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (round_number, client_id, client_metrics.get('timestamp', time.time()),
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (round_number, client_id, session_id, client_metrics.get('timestamp', time.time()),
                   training.get('loss'), training.get('accuracy'), training.get('training_time'),
                   training.get('num_samples'), model.get('total_mb'), system.get('process_cpu_percent'),
                   system.get('process_memory_mb'), network.get('bytes_sent', 0), network.get('bytes_received', 0),
@@ -493,7 +496,7 @@ class ServerMetricsCollector:
             print(f"❌ Failed to store client metrics after retries: {e}")
             raise
 
-    def update_client_metrics(self, round_number: int, client_id: int, client_metrics: Dict[str, Any]):
+    def update_client_metrics(self, round_number: int, client_id: int, client_metrics: Dict[str, Any], session_id: str = None):
         """Update an existing client metrics row or insert a new one if missing."""
         
         # DEBUG: Log what we're receiving
