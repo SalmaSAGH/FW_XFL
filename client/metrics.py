@@ -62,6 +62,12 @@ class MetricsCollector:
             new_network_config: New network configuration dictionary
         """
         if new_network_config:
+            simulate_constraints = new_network_config.get('simulate_constraints')
+            if isinstance(simulate_constraints, str):
+                new_network_config['simulate_constraints'] = simulate_constraints.lower() in ('true', '1', 'yes')
+            elif simulate_constraints is None:
+                new_network_config['simulate_constraints'] = False
+
             self.network_config.update(new_network_config)
             # Update energy config if network config has energy parameters
             for legacy_key, new_key in {
@@ -214,10 +220,7 @@ class MetricsCollector:
         if self.network_config.get('simulate_constraints', False):
             packet_loss_rate = self.simulate_packet_loss()
         else:
-            packet_loss_rate = self.network_config.get('packet_loss_rate', 0.0)
-
-        if packet_loss_rate == 0.0 and self.network_config.get('packet_loss_rate', 0.0) == 0.0:
-            packet_loss_rate = random.uniform(0.001, 0.01)
+            packet_loss_rate = 0.0
 
         return {
             "bytes_sent": bytes_sent,

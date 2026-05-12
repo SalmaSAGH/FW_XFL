@@ -81,6 +81,79 @@ def register_with_server(server_url: str, client_id: int, ip_address: str = None
         return False
 
 
+def fetch_server_config(server_url: str) -> dict:
+    """Fetch the latest FL configuration from the server."""
+    try:
+        response = requests.get(f"{server_url}/api/config", timeout=10)
+        if response.status_code == 200:
+            return response.json().get('config', {})
+    except Exception:
+        pass
+    return {}
+
+
+def apply_server_config_to_client(
+    config: dict,
+    fl_client,
+    current_model: str,
+    current_dataset: str,
+    current_distribution: str,
+    current_num_clients: int,
+    current_batch_size: int,
+    current_local_epochs: int,
+    current_learning_rate: float
+):
+    """Apply server config changes to the running FL client."""
+    if not config:
+        return (
+            current_model,
+            current_dataset,
+            current_distribution,
+            current_num_clients,
+            current_batch_size,
+            current_local_epochs,
+            current_learning_rate
+        )
+
+    server_model = config.get('model', current_model)
+    server_dataset = config.get('dataset', current_dataset)
+    server_distribution = config.get('dataDistribution', current_distribution)
+    server_num_clients = int(config.get('numClients', current_num_clients))
+    server_batch_size = int(config.get('batchSize', current_batch_size))
+    server_local_epochs = int(config.get('localEpochs', current_local_epochs))
+    server_learning_rate = float(config.get('learningRate', current_learning_rate))
+
+    if server_local_epochs != fl_client.local_epochs:
+        print(f"Client {fl_client.client_id}: 🔄 local_epochs updated {fl_client.local_epochs} → {server_local_epochs}")
+        fl_client.local_epochs = server_local_epochs
+
+    if server_learning_rate != fl_client.learning_rate:
+        print(f"Client {fl_client.client_id}: 🔄 learning_rate updated {fl_client.learning_rate} → {server_learning_rate}")
+        fl_client.learning_rate = server_learning_rate
+        fl_client.trainer.learning_rate = server_learning_rate
+        for param_group in fl_client.trainer.optimizer.param_groups:
+            param_group['lr'] = server_learning_rate
+
+    fl_client.reload_data_if_needed(
+        dataset_name=server_dataset,
+        model_name=server_model,
+        distribution=server_distribution,
+        num_clients=server_num_clients,
+        batch_size=server_batch_size,
+        verbose=False
+    )
+
+    return (
+        server_model,
+        server_dataset,
+        server_distribution,
+        server_num_clients,
+        server_batch_size,
+        server_local_epochs,
+        server_learning_rate
+    )
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--client-id',    type=int, required=True)
@@ -134,31 +207,17 @@ def main():
     
     # ── Get current configuration from server ─────────────────────────────────
     print(f"Client {args.client_id}: Getting configuration from server...")
-    try:
-        response = requests.get(f"{server_url}/api/config", timeout=10)
-        if response.status_code == 200:
-            config = response.json().get('config', {})
-            server_model = config.get('model', 'SimpleCNN')
-            server_dataset = config.get('dataset', args.dataset)
-            server_num_clients = config.get('numClients', args.num_clients)
-            server_batch_size = config.get('batchSize', args.batch_size)
-            server_local_epochs = config.get('localEpochs', args.local_epochs)
-            print(f"Client {args.client_id}: Server config - model={server_model}, dataset={server_dataset}, "
-                  f"num_clients={server_num_clients}, batch_size={server_batch_size}, local_epochs={server_local_epochs}")
-        else:
-            print(f"Client {args.client_id}: Could not get server config, using command line args")
-            server_model = 'SimpleCNN'
-            server_dataset = args.dataset
-            server_num_clients = args.num_clients
-            server_batch_size = args.batch_size
-            server_local_epochs = args.local_epochs
-    except Exception as e:
-        print(f"Client {args.client_id}: Error getting server config: {e}, using command line args")
-        server_model = 'SimpleCNN'
-        server_dataset = args.dataset
-        server_num_clients = args.num_clients
-        server_batch_size = args.batch_size
-        server_local_epochs = args.local_epochs
+    config = fetch_server_config(server_url)
+    server_model = config.get('model', 'SimpleCNN')
+    server_dataset = config.get('dataset', args.dataset)
+    server_num_clients = int(config.get('numClients', args.num_clients))
+    server_batch_size = int(config.get('batchSize', args.batch_size))
+    server_local_epochs = int(config.get('localEpochs', args.local_epochs))
+    server_learning_rate = float(config.get('learningRate', 0.01))
+    server_distribution = config.get('dataDistribution', args.distribution)
+
+    print(f"Client {args.client_id}: Server config - model={server_model}, dataset={server_dataset}, "
+          f"num_clients={server_num_clients}, batch_size={server_batch_size}, local_epochs={server_local_epochs}")
 
     # ── Create model using server configuration ──────────────────────────────
     # Get parameters for the server-selected model
@@ -180,7 +239,7 @@ def main():
         client_id=args.client_id,
         num_clients=server_num_clients,
         batch_size=server_batch_size,
-        distribution=args.distribution,
+        distribution=server_distribution,
         data_dir=args.data_dir,
         seed=42
     )
@@ -197,7 +256,7 @@ def main():
         dataset_name=server_dataset,        
         num_clients=server_num_clients,     
         batch_size=server_batch_size,       
-        distribution=args.distribution,  
+        distribution=server_distribution,  
         data_dir=args.data_dir,
         use_real_hardware_metrics=(args.mode == 'real-hardware'),
         real_metrics_collector=None  # Will be set after initialization
@@ -266,6 +325,26 @@ def main():
             
             if response.status_code == 200:
                 status = response.json()
+
+                # Reload latest config from server before participating
+                server_config = fetch_server_config(server_url)
+                (server_model,
+                 server_dataset,
+                 server_distribution,
+                 server_num_clients,
+                 server_batch_size,
+                 server_local_epochs,
+                 server_learning_rate) = apply_server_config_to_client(
+                     server_config,
+                     fl_client,
+                     server_model,
+                     server_dataset,
+                     server_distribution,
+                     server_num_clients,
+                     server_batch_size,
+                     server_local_epochs,
+                     server_learning_rate
+                 )
                 
                 # Check if round is in progress and this client is selected
                 round_in_progress = status.get('round_in_progress', False)

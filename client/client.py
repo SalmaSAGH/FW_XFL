@@ -9,6 +9,7 @@ import pickle
 import base64
 from collections import OrderedDict
 import time
+import random
 from typing import Dict, Any, Tuple
 import torch
 import torch.optim as optim
@@ -132,6 +133,21 @@ class FLClient:
     def _get_model_for_dataset(self, dataset_name: str):
         return DATASET_CONFIG.get(dataset_name, ('SimpleCNN', 10, 1, 28))
 
+    def _get_resource_usage(self) -> Dict[str, float]:
+        if not hasattr(self, 'metrics_collector') or self.metrics_collector is None:
+            return {
+                'cpu_percent': 0.0,
+                'memory_mb': 0.0,
+                'memory_percent': 0.0
+            }
+
+        metrics = self.metrics_collector.get_system_metrics()
+        return {
+            'cpu_percent': metrics.get('system_cpu_percent', 0.0),
+            'memory_mb': metrics.get('process_memory_mb', 0.0),
+            'memory_percent': metrics.get('system_memory_percent', 0.0)
+        }
+
     def reload_data_if_needed(self, dataset_name: str,
                                model_name: str = None,
                                distribution: str = None,
@@ -217,6 +233,31 @@ class FLClient:
         self._cleanup_memory()
         return True
 
+    def _simulate_network_delay(self, size_bytes: int, direction: str = 'upload') -> float:
+        """Estimate a simulated network delay for upload/download."""
+        if not hasattr(self, 'metrics_collector') or not self.metrics_collector:
+            return 0.0
+
+        network_config = self.metrics_collector.network_config
+        if not network_config.get('simulate_constraints', False):
+            return 0.0
+
+        bandwidth_mbps = max(0.1, float(network_config.get('bandwidth_mbps', 10)))
+        latency_ms = float(network_config.get('latency_ms', 0))
+        latency_std_ms = float(network_config.get('latency_std_ms', 0))
+        packet_loss_rate = float(network_config.get('packet_loss_rate', 0.0))
+
+        simulated_latency = max(0.0, random.gauss(latency_ms, latency_std_ms)) / 1000.0
+        transfer_time = (size_bytes * 8) / (bandwidth_mbps * 1_000_000)
+        delay = simulated_latency + transfer_time
+
+        if packet_loss_rate > 0 and random.random() < packet_loss_rate:
+            extra_loss_delay = min(2.0, transfer_time + simulated_latency)
+            print(f"Client {self.client_id}: ⚠️ Simulated {direction} packet loss, adding {extra_loss_delay:.2f}s delay")
+            delay += extra_loss_delay
+
+        return max(0.0, delay)
+
     def participate_in_round(self, verbose: bool = False) -> bool:
         try:
             # NOTE: reset_round_metrics() is now called in run_client_raspberry_pi.py
@@ -232,6 +273,12 @@ class FLClient:
                 return False
 
             data = response.json()
+            download_delay = self._simulate_network_delay(len(response.content), 'download')
+            if download_delay > 0:
+                if verbose:
+                    print(f"Client {self.client_id}: ⏳ Simulated download delay {download_delay:.2f}s")
+                time.sleep(download_delay)
+
             weights = self._base64_to_weights(data['weights'])
             current_round = data['round']
             xfl_strategy = data.get('xfl_strategy', 'all_layers')
@@ -257,13 +304,19 @@ class FLClient:
                     param_group['lr'] = self.learning_rate
 
             # Update network config if changed
+            raw_simulate_constraints = data.get('simulate_constraints', False)
+            if isinstance(raw_simulate_constraints, str):
+                simulate_constraints = raw_simulate_constraints.lower() in ('true', '1', 'yes')
+            else:
+                simulate_constraints = bool(raw_simulate_constraints)
+
             server_network_config = {
                 'latency_ms': data.get('network_latency_ms', 0),
                 'latency_std_ms': data.get('network_latency_std_ms', 0),
                 'bandwidth_mbps': data.get('network_bandwidth_mbps', 10),
                 'packet_loss_rate': data.get('network_packet_loss_rate', 0),
                 'jitter_ms': data.get('jitter_ms', 0),
-                'simulate_constraints': data.get('simulate_constraints', False)
+                'simulate_constraints': simulate_constraints
             }
             if hasattr(self, 'metrics_collector') and self.metrics_collector:
                 self.metrics_collector.update_network_config(server_network_config)
@@ -271,22 +324,27 @@ class FLClient:
             # Check system limits (CPU, RAM) and add to metrics if exceeded
             server_cpu_limit = data.get('cpu_limit', 100)
             server_ram_limit = data.get('ram_limit', 2048)
+            cpu_limit_exceeded = False
+            ram_limit_exceeded = False
             if hasattr(self, 'metrics_collector') and self.metrics_collector:
                 current_metrics = self.metrics_collector.get_system_metrics()
                 current_cpu = current_metrics.get('system_cpu_percent', 0)
-                current_ram = current_metrics.get('system_memory_percent', 0)
-                
+                current_ram_mb = current_metrics.get('process_memory_mb', 0)
+
                 # Add limit info to metrics for server-side monitoring
                 self.metrics_collector.network_config['cpu_limit'] = server_cpu_limit
                 self.metrics_collector.network_config['ram_limit'] = server_ram_limit
-                
-                # Log warning if limits exceeded
-                if current_cpu > server_cpu_limit:
+
+                # No blocking: just notify when limits are exceeded
+                cpu_limit_exceeded = current_cpu > server_cpu_limit
+                ram_limit_exceeded = current_ram_mb > server_ram_limit
+
+                if cpu_limit_exceeded:
                     print(f"⚠️ Client {self.client_id}: CPU limit exceeded! "
                           f"Current: {current_cpu}% > Limit: {server_cpu_limit}%")
-                if current_ram > server_ram_limit:
+                if ram_limit_exceeded:
                     print(f"⚠️ Client {self.client_id}: RAM limit exceeded! "
-                          f"Current: {current_ram}% > Limit: {server_ram_limit}%")
+                          f"Current: {current_ram_mb:.1f}MB > Limit: {server_ram_limit}MB")
 
             # Update num_clients if changed
             if server_num_clients != self.num_clients:
@@ -384,6 +442,11 @@ class FLClient:
             )
 
             # Build metrics now so the server receives a real client submission immediately
+            # Measure current resource usage for limit detection
+            current_metrics = self.metrics_collector.get_system_metrics() if hasattr(self, 'metrics_collector') else {}
+            current_cpu_percent = current_metrics.get('system_cpu_percent', 0)
+            current_memory_mb = current_metrics.get('process_memory_mb', 0)
+
             if self.use_real_hardware_metrics and self.real_metrics_collector is not None:
                 real_summary = self.real_metrics_collector.get_summary()
                 metrics_payload = {
@@ -393,14 +456,18 @@ class FLClient:
                     'num_samples': num_samples,
                     'bytes_sent': model_size_bytes,
                     'bytes_received': model_size_bytes,
-                    'cpu_percent': real_summary.get('cpu', {}).get('avg_percent', 0),
-                    'memory_mb': real_summary.get('memory', {}).get('avg_mb', 0),
+                    'cpu_percent': real_summary.get('cpu', {}).get('avg_percent', current_cpu_percent),
+                    'memory_mb': real_summary.get('memory', {}).get('avg_mb', current_memory_mb),
                     'temperature_celsius': real_summary.get('temperature', {}).get('avg_celsius'),
                     'energy_wh': real_summary.get('energy', {}).get('total_wh', 0),
                     'latency_ms': real_summary.get('network', {}).get('avg_latency_ms', 0),
                     'jitter_ms': real_summary.get('network', {}).get('avg_jitter_ms', 0),
                     'packet_loss_rate': real_summary.get('network', {}).get('packet_loss_rate', 0),
                     'throughput_mbps': real_summary.get('network', {}).get('avg_bandwidth_mbps', 0),
+                    'cpu_limit': server_cpu_limit,
+                    'ram_limit': server_ram_limit,
+                    'cpu_limit_exceeded': cpu_limit_exceeded,
+                    'ram_limit_exceeded': ram_limit_exceeded,
                     'is_real_measurement': True
                 }
             else:
@@ -411,6 +478,12 @@ class FLClient:
                     'num_samples': num_samples,
                     'bytes_sent': model_size_bytes,
                     'bytes_received': model_size_bytes,
+                    'cpu_percent': current_cpu_percent,
+                    'memory_mb': current_memory_mb,
+                    'cpu_limit': server_cpu_limit,
+                    'ram_limit': server_ram_limit,
+                    'cpu_limit_exceeded': cpu_limit_exceeded,
+                    'ram_limit_exceeded': ram_limit_exceeded,
                     'is_real_measurement': True
                 }
 
@@ -427,6 +500,10 @@ class FLClient:
 
             tx_timeout = 180
             print(f"🔍 DEBUG: upload submit_update timeout={tx_timeout}s (real_hardware={self.use_real_hardware_metrics})")
+            upload_delay = self._simulate_network_delay(model_size_bytes, 'upload')
+            if upload_delay > 0 and verbose:
+                print(f"Client {self.client_id}: ⏳ Simulated upload delay {upload_delay:.2f}s")
+            time.sleep(upload_delay)
             start_tx = time.perf_counter()
 
             max_retries = 3
@@ -455,17 +532,36 @@ class FLClient:
                 self._cleanup_memory()
                 return False
 
-            tx_time = time.perf_counter() - start_tx
-            tx_latency_ms = tx_time * 1000  # Real end-to-end latency
-            if model_size_bytes and tx_time > 0:
-                measured_throughput_mbps = (model_size_bytes * 8) / (tx_time * 1_000_000)
+            wire_tx_time = time.perf_counter() - start_tx
+            total_tx_time = wire_tx_time + upload_delay
+            tx_latency_ms = total_tx_time * 1000  # Effective end-to-end latency
+            if model_size_bytes and total_tx_time > 0:
+                measured_throughput_mbps = (model_size_bytes * 8) / (total_tx_time * 1_000_000)
             else:
                 measured_throughput_mbps = 0.0
 
-            # After upload, send the real metrics update so the server stores the true transmission time
-            metrics_payload['transmission_time_sec'] = tx_time
-            metrics_payload['throughput_mbps'] = round(measured_throughput_mbps, 6)
-            metrics_payload['tx_latency_ms'] = tx_latency_ms
+            # After upload, send the real metrics update so the server stores the true transmission time and network metrics
+            network_metrics = self.metrics_collector.get_network_metrics(
+                bytes_sent=model_size_bytes,
+                bytes_received=model_size_bytes,
+                transmission_time=total_tx_time
+            ) if hasattr(self, 'metrics_collector') and self.metrics_collector else {
+                'latency_ms': tx_latency_ms,
+                'packet_loss_rate': 0.0,
+                'jitter_ms': 0.0,
+                'transmission_time_sec': total_tx_time,
+                'throughput_mbps': round(measured_throughput_mbps, 6),
+                'bytes_sent': model_size_bytes,
+                'bytes_received': model_size_bytes
+            }
+
+            metrics_payload['transmission_time_sec'] = network_metrics.get('transmission_time_sec', total_tx_time)
+            metrics_payload['throughput_mbps'] = network_metrics.get('throughput_mbps', round(measured_throughput_mbps, 6))
+            metrics_payload['latency_ms'] = network_metrics.get('latency_ms', tx_latency_ms)
+            metrics_payload['packet_loss_rate'] = network_metrics.get('packet_loss_rate', 0.0)
+            metrics_payload['jitter_ms'] = network_metrics.get('jitter_ms', 0.0)
+            metrics_payload['bytes_sent'] = network_metrics.get('bytes_sent', model_size_bytes)
+            metrics_payload['bytes_received'] = network_metrics.get('bytes_received', model_size_bytes)
 
             metrics_update_payload = {
                 "client_id": self.client_id,
@@ -512,7 +608,7 @@ class FLClient:
             if verbose:
                 print(f"Client {self.client_id}: ✅ Submitted | "
                       f"{result.get('submissions')} updates received by server | "
-                      f"Real tx_time={tx_time:.3f}s | latency={tx_latency_ms:.1f}ms | "
+                      f"Real tx_time={total_tx_time:.3f}s | latency={tx_latency_ms:.1f}ms | "
                       f"throughput={metrics_payload['throughput_mbps']:.3f} Mbps")
 
             self._cleanup_memory()

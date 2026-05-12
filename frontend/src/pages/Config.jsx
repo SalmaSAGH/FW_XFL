@@ -24,9 +24,12 @@ function Config() {
     networkLatency: 0,
     networkBandwidth: 10,
     networkPacketLoss: 0,
+    simulateConstraints: false,
     // System Parameters
     cpuLimit: 100,
     ramLimit: 2048,
+    // Round Timeout
+    roundTimeout: 300,
   });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
@@ -167,9 +170,9 @@ function Config() {
   ];
 
   const packetLossOptions = [
-    { value: 0, label: '0% (Perfect)' },
-    { value: 1, label: '1% (Low)' },
-    { value: 5, label: '5% (High)' },
+    { value: 0.0, label: '0% (Perfect)' },
+    { value: 0.01, label: '1% (Low)' },
+    { value: 0.05, label: '5% (High)' },
   ];
 
   // System parameter options
@@ -264,18 +267,37 @@ function Config() {
           {/* CATEGORY 2: NETWORK PARAMETERS */}
           {/* ============================================ */}
           <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #4fc3f7' }}>
-            <h2 className="panel-title">
-              🌐 Network Parameters
-              <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#888', marginLeft: '10px' }}>
-                (Latency, Bandwidth, Packet Loss)
-              </span>
-            </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px', flexWrap: 'wrap' }}>
+              <div>
+                <h2 className="panel-title" style={{ marginBottom: '6px' }}>
+                  🌐 Network Parameters
+                </h2>
+                <div style={{ fontSize: '12px', fontWeight: '400', color: '#666' }}>
+                  Configure network delay, bandwidth and packet loss for training rounds.
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', borderRadius: '12px', background: '#e3f2fd', border: '1px solid #b3e5fc' }}>
+                <input
+                  type="checkbox"
+                  checked={config.simulateConstraints}
+                  onChange={(e) => handleConfigChange('simulateConstraints', e.target.checked)}
+                  style={{ width: '18px', height: '18px', accentColor: '#0288d1' }}
+                />
+                <div>
+                  <div style={{ fontWeight: '700', color: '#0d47a1' }}>Enable Network Simulation</div>
+                  <div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>
+                    Toggle network simulation on or off for the next training round.
+                  </div>
+                </div>
+              </div>
+            </div>
             
-            <div className="grid-3">
+            <div className="grid-3" style={{ marginTop: '24px' }}>
               <div className="form-group">
                 <label>Latency</label>
                 <select
                   value={config.networkLatency}
+                  disabled={!config.simulateConstraints}
                   onChange={(e) => handleConfigChange('networkLatency', parseInt(e.target.value))}
                 >
                   {latencyOptions.map(opt => (
@@ -288,6 +310,7 @@ function Config() {
                 <label>Bandwidth</label>
                 <select
                   value={config.networkBandwidth}
+                  disabled={!config.simulateConstraints}
                   onChange={(e) => handleConfigChange('networkBandwidth', parseInt(e.target.value))}
                 >
                   {bandwidthOptions.map(opt => (
@@ -300,7 +323,8 @@ function Config() {
                 <label>Packet Loss</label>
                 <select
                   value={config.networkPacketLoss}
-                  onChange={(e) => handleConfigChange('networkPacketLoss', parseInt(e.target.value))}
+                  disabled={!config.simulateConstraints}
+                  onChange={(e) => handleConfigChange('networkPacketLoss', parseFloat(e.target.value))}
                 >
                   {packetLossOptions.map(opt => (
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -490,6 +514,20 @@ function Config() {
                 value={config.learningRate}
                 onChange={(e) => handleConfigChange('learningRate', parseFloat(e.target.value))}
               />
+            </div>
+
+            <div className="form-group" style={{ marginTop: '15px' }}>
+              <label>Round Timeout (seconds)</label>
+              <input
+                type="number"
+                min="0"
+                max="3600"
+                value={config.roundTimeout}
+                onChange={(e) => handleConfigChange('roundTimeout', parseInt(e.target.value))}
+              />
+              <div style={{ marginTop: '5px', fontSize: '12px', color: '#888' }}>
+                Maximum time to wait for clients to submit updates. Set to 0 for no timeout.
+              </div>
             </div>
           </div>
 

@@ -196,6 +196,9 @@ class DashboardServer:
                     ram_limit = server_status.get('ram_limit', 512)
                     active_clients_percent = server_status.get('active_clients_percent', 100)
                     data_distribution = server_status.get('data_distribution', 'iid')
+                    resource_alerts = server_status.get('resource_alerts', [])
+                else:
+                    resource_alerts = []
 
                 conn.close()
 
@@ -221,27 +224,7 @@ class DashboardServer:
                     "ram_limit": ram_limit,
                     "active_clients_percent": active_clients_percent,
                     "data_distribution": data_distribution,
-                })
-
-            except Exception as e:
-                import traceback
-                print(f"ERROR in get_status: {traceback.format_exc()}")
-                return jsonify({"error": str(e)}), 500
-
-        @self.app.route('/api/accuracy')
-        def get_accuracy_data():
-            try:
-                conn = psycopg2.connect(self.db_url)
-                cursor = conn.cursor()
-                cursor.execute("""
-                    SELECT round_number, global_test_accuracy
-                    FROM round_metrics ORDER BY round_number
-                """)
-                data = cursor.fetchall()
-                conn.close()
-                return jsonify({
-                    "rounds": [row[0] for row in data],
-                    "accuracy": [round(row[1], 2) if row[1] is not None else None for row in data]
+                    "resource_alerts": resource_alerts,
                 })
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
@@ -309,16 +292,26 @@ class DashboardServer:
             last_completed_round = 0
             active_in_last_round = set()
 
+            client_data_map = {}
+            last_completed_round = 0
+            active_in_last_round = set()
+
             try:
                 conn = psycopg2.connect(self.db_url)
                 cursor = conn.cursor()
+                # Get latest metrics per client instead of averages
                 cursor.execute("""
-                    SELECT client_id,
-                           AVG(training_accuracy), AVG(training_time_sec),
-                           AVG(cpu_percent), AVG(memory_mb),
-                           MAX(round_number), COUNT(*)
-                    FROM client_metrics
-                    GROUP BY client_id ORDER BY client_id
+                    SELECT cm.client_id,
+                           cm.training_accuracy, cm.training_time_sec,
+                           cm.cpu_percent, cm.memory_mb,
+                           cm.round_number, 1
+                    FROM client_metrics cm
+                    INNER JOIN (
+                        SELECT client_id, MAX(round_number) as max_round
+                        FROM client_metrics
+                        GROUP BY client_id
+                    ) latest ON cm.client_id = latest.client_id AND cm.round_number = latest.max_round
+                    ORDER BY cm.client_id
                 """)
                 client_data_map = {row[0]: row for row in cursor.fetchall()}
 
@@ -376,7 +369,7 @@ class DashboardServer:
                 print(f"⚠️ Server status error: {e}")
 
             clients = []
-            for client_id in range(expected_clients):
+            for client_id in range(1, expected_clients + 1):
                 if round_in_progress:
                     if client_id in submitted_clients:
                         state = "active"

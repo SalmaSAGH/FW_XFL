@@ -8,6 +8,7 @@ import torch
 from torch.utils.data import DataLoader
 import pickle
 import base64
+import json
 import hashlib
 import secrets
 import os
@@ -22,6 +23,8 @@ import time
 import threading
 import signal
 import sys
+import json
+from datetime import datetime
 
 from .strategy import create_aggregation_strategy, XFL, FedAvg
 from .metrics import ServerMetricsCollector
@@ -230,7 +233,7 @@ def save_fl_config_to_db(config: dict):
                 VALUES (%s, %s, %s)
                 ON CONFLICT (config_key) 
                 DO UPDATE SET config_value = EXCLUDED.config_value, updated_at = EXCLUDED.updated_at
-            """, (key, str(value), time.time()))
+            """, (key, json.dumps(value), time.time()))
         
         conn.commit()
         conn.close()
@@ -251,13 +254,18 @@ def load_fl_config_from_db() -> dict:
         
         config = {}
         for key, value in results:
-            if value.isdigit():
-                config[key] = int(value)
-            else:
-                try:
-                    config[key] = float(value)
-                except:
-                    config[key] = value
+            try:
+                config[key] = json.loads(value)
+            except Exception:
+                if isinstance(value, str) and value.lower() in ('true', 'false'):
+                    config[key] = value.lower() == 'true'
+                elif isinstance(value, str) and value.isdigit():
+                    config[key] = int(value)
+                else:
+                    try:
+                        config[key] = float(value)
+                    except Exception:
+                        config[key] = value
         
         return config
     except Exception as e:
@@ -544,6 +552,11 @@ class FLServer:
                         self.num_rounds = int(latest_config['numRounds'])
                         print(f"Using numRounds from config: {self.num_rounds}")
                     
+                    # Get round timeout
+                    timeout_seconds = int(latest_config.get('roundTimeout', 300))
+                    print(f"Using round timeout: {timeout_seconds} seconds")
+                    self.round_timeout = timeout_seconds
+                    
                     # Check if model changed and recreate if needed
                     if 'model' in latest_config:
                         new_model_name = latest_config['model']
@@ -583,6 +596,8 @@ class FLServer:
                             print(f"✅ New model '{new_model_name}' created and test loader updated")
             except Exception as e:
                 print(f"WARNING:  Warning: Could not reload config from database: {e}")
+                timeout_seconds = 300  # default
+                self.round_timeout = 300
 
             self.current_round += 1
             self.round_in_progress = True
@@ -590,9 +605,13 @@ class FLServer:
 
             self._save_current_round()
 
-            # Start round timeout timer (5 minutes)
-            self.round_timer = threading.Timer(5 * 60, self._round_timeout)
-            self.round_timer.start()
+            # Start round timeout timer if configured
+            if timeout_seconds > 0:
+                self.round_timer = threading.Timer(timeout_seconds, self._round_timeout)
+                self.round_timer.start()
+            else:
+                self.round_timer = None
+                print("   ⏳ Round timeout disabled; waiting for all selected clients to submit.")
 
             # Save placeholder round metrics tagged with session_id
             try:
@@ -775,18 +794,19 @@ class FLServer:
     def _round_timeout(self):
         """Called when round times out - aggregate with available clients"""
         with self.lock:
+            timeout_minutes = self.round_timeout // 60
             if self.round_in_progress and len(self.client_submissions) >= max(1, self.current_clients_expected * 0.8):
-                print(f"\n⏰ Round {self.current_round} timed out after 5 minutes. "
+                print(f"\n⏰ Round {self.current_round} timed out after {timeout_minutes} minutes. "
                       f"Aggregating with {len(self.client_submissions)}/{self.current_clients_expected} clients "
                       f"(at least 80% received)")
                 self._aggregate_round()
             elif self.round_in_progress and len(self.client_submissions) > 0:
-                print(f"\n⏰ Round {self.current_round} timed out after 5 minutes. "
+                print(f"\n⏰ Round {self.current_round} timed out after {timeout_minutes} minutes. "
                       f"Aggregating with {len(self.client_submissions)}/{self.current_clients_expected} clients "
                       f"(insufficient for 80% threshold)")
                 self._aggregate_round()
             elif self.round_in_progress:
-                print(f"\n⏰ Round {self.current_round} timed out with no submissions. "
+                print(f"\n⏰ Round {self.current_round} timed out after {timeout_minutes} minutes with no submissions. "
                       f"Ending round without aggregation")
                 self.round_in_progress = False
                 self.client_submissions = []
@@ -1042,6 +1062,61 @@ class FLServer:
             submitted_set = {sub["client_id"] for sub in self.client_submissions}
             pending_clients = sorted(list(selected_set - submitted_set))
 
+            resource_alerts = []
+            # Only show alerts for the last completed round (not the current one in progress)
+            if not self.round_in_progress:
+                try:
+                    conn = psycopg2.connect(DB_URL)
+                    cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+                    cpu_limit = fl_config.get('cpuLimit', 100)
+                    ram_limit = fl_config.get('ramLimit', 2048)
+                    
+                    # Get the last completed round (one with global_test_accuracy)
+                    cursor.execute("""
+                        SELECT round_number
+                        FROM round_metrics
+                        WHERE global_test_accuracy IS NOT NULL
+                        ORDER BY round_number DESC
+                        LIMIT 1
+                    """)
+                    last_completed = cursor.fetchone()
+                    
+                    if last_completed:
+                        last_round = last_completed['round_number']
+                        # Get alerts only for the last completed round
+                        cursor.execute("""
+                            SELECT round_number, client_id, cpu_percent, memory_mb, timestamp
+                            FROM client_metrics
+                            WHERE round_number = %s
+                              AND ((cpu_percent IS NOT NULL AND cpu_percent > %s) 
+                                OR (memory_mb IS NOT NULL AND memory_mb > %s))
+                            ORDER BY client_id ASC
+                        """, (last_round, cpu_limit, ram_limit))
+                        rows = cursor.fetchall()
+                        print(f"🔍 DEBUG: Found {len(rows)} resource alerts for round {last_round} (CPU>{cpu_limit}% or RAM>{ram_limit}MB)")
+                        for row in rows:
+                            alert = {
+                                'round_number': row['round_number'],
+                                'client_id': row['client_id'],
+                                'client_name': f'Pi {row["client_id"]:02d}',
+                                'cpu_percent': float(row['cpu_percent']) if row['cpu_percent'] is not None else 0,
+                                'memory_mb': float(row['memory_mb']) if row['memory_mb'] is not None else 0,
+                                'cpu_limit': cpu_limit,
+                                'ram_limit': ram_limit,
+                                'timestamp': datetime.fromtimestamp(row['timestamp']).isoformat() if row['timestamp'] else None,
+                                'cpu_limit_exceeded': (row['cpu_percent'] is not None and row['cpu_percent'] > cpu_limit),
+                                'ram_limit_exceeded': (row['memory_mb'] is not None and row['memory_mb'] > ram_limit)
+                            }
+                            resource_alerts.append(alert)
+                            print(f"  → Client {alert['client_id']} R{alert['round_number']}: CPU {alert['cpu_percent']:.1f}% (>{cpu_limit}%={alert['cpu_limit_exceeded']}), RAM {alert['memory_mb']:.1f}MB (>{ram_limit}MB={alert['ram_limit_exceeded']})")
+                    conn.close()
+                except Exception as e:
+                    print(f"WARNING: Could not query resource alerts: {e}")
+                    import traceback
+                    traceback.print_exc()
+            else:
+                print(f"🔍 DEBUG: Skipping resource alerts display - round {self.current_round} in progress")
+
             return {
                 "current_round": self.current_round,
                 "total_rounds": self.num_rounds,
@@ -1062,7 +1137,8 @@ class FLServer:
                 "num_layers": num_layers,
                 "session_id": self.session_id,
                 "cpu_limit": fl_config.get('cpuLimit', 100),
-                "ram_limit": fl_config.get('ramLimit', 2048)
+                "ram_limit": fl_config.get('ramLimit', 2048),
+                "resource_alerts": resource_alerts
             }
     
     def set_xfl_strategy(self, strategy: str, param: int = 3) -> Dict[str, Any]:
@@ -1109,6 +1185,7 @@ fl_config = {
     "networkLatency": 0,
     "networkBandwidth": 10,
     "networkPacketLoss": 0,
+    "simulateConstraints": False,
     "cpuLimit": 100,
     "ramLimit": 2048,
 }
@@ -1162,7 +1239,27 @@ def save_config():
     if 'clientsPerRound' in data:
         fl_config['clientsPerRound'] = int(data['clientsPerRound'])
         print(f"Updated fl_config clientsPerRound to {fl_config['clientsPerRound']}")
-    
+
+    if 'networkPacketLoss' in data:
+        packet_loss_rate = data['networkPacketLoss']
+        try:
+            packet_loss_rate = float(packet_loss_rate)
+        except (TypeError, ValueError):
+            packet_loss_rate = 0.0
+        if packet_loss_rate > 1:
+            packet_loss_rate = packet_loss_rate / 100.0
+        fl_config['networkPacketLoss'] = max(0.0, min(1.0, packet_loss_rate))
+        print(f"Updated networkPacketLoss to {fl_config['networkPacketLoss']}")
+
+    if 'simulateConstraints' in data:
+        simulate_constraints = data['simulateConstraints']
+        if isinstance(simulate_constraints, str):
+            simulate_constraints = simulate_constraints.lower() in ('true', '1', 'yes')
+        else:
+            simulate_constraints = bool(simulate_constraints)
+        fl_config['simulateConstraints'] = simulate_constraints
+        print(f"Updated simulateConstraints to {fl_config['simulateConstraints']}")
+
     if fl_server is not None and 'numRounds' in data:
         old_num_rounds = fl_server.num_rounds
         fl_server.num_rounds = int(data['numRounds'])
@@ -1352,7 +1449,11 @@ def get_global_model():
     network_packet_loss = fl_config.get('networkPacketLoss', 0)
     cpu_limit = fl_config.get('cpuLimit', 100)
     ram_limit = fl_config.get('ramLimit', 2048)
-    simulate_constraints = fl_config.get('simulateConstraints', False)
+    simulate_constraints_value = fl_config.get('simulateConstraints', False)
+    if isinstance(simulate_constraints_value, str):
+        simulate_constraints = simulate_constraints_value.lower() in ('true', '1', 'yes')
+    else:
+        simulate_constraints = bool(simulate_constraints_value)
 
     # Always send the server's actual active model and dataset
     dataset_name = fl_server.current_dataset_name
@@ -1970,37 +2071,49 @@ def _build_experiment(rows, experiment_id: int, session_id, session_meta: dict, 
     }
 
 
-@app.route('/api/health', methods=['GET'])
-def health_check():
+@app.route('/api/rounds_history', methods=['GET'])
+def api_get_rounds_history():
+    """Get history of completed rounds with client participation"""
     try:
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
-        
-        cursor.execute("SELECT 1")
-        cursor.fetchone()
-        
+
+        # Get all completed rounds with their metrics
         cursor.execute("""
-            SELECT 
-                (SELECT COUNT(*) FROM round_metrics) as total_rounds,
-                (SELECT COUNT(*) FROM client_metrics) as total_client_submissions,
-                (SELECT COUNT(*) FROM round_metrics WHERE global_test_accuracy IS NOT NULL) as completed_rounds
+            SELECT round_number, num_clients, global_test_accuracy, global_test_loss,
+                   aggregation_time_sec, timestamp, metrics_json
+            FROM round_metrics
+            WHERE global_test_accuracy IS NOT NULL
+            ORDER BY round_number
         """)
-        stats = cursor.fetchone()
-        
+
+        rows = cursor.fetchall()
         conn.close()
-        
-        return jsonify({
-            "status": "healthy",
-            "database": "connected",
-            "session_id": CURRENT_SESSION_ID,
-            "stats": {
-                "total_rounds": stats[0],
-                "total_client_submissions": stats[1],
-                "completed_rounds": stats[2]
-            }
-        })
+
+        rounds = []
+        for row in rows:
+            round_num, num_clients, accuracy, loss, agg_time, timestamp, metrics_json = row
+
+            # Extract submitted_clients from metrics_json if available
+            submitted_clients = []
+            if metrics_json and 'submitted_clients' in metrics_json:
+                submitted_clients = metrics_json['submitted_clients']
+
+            rounds.append({
+                "round": round_num,
+                "clients": num_clients,
+                "accuracy": round(accuracy, 2) if accuracy is not None else None,
+                "loss": round(loss, 4) if loss is not None else None,
+                "agg_time": round(agg_time, 2) if agg_time is not None else None,
+                "timestamp": timestamp,
+                "submitted_clients": submitted_clients
+            })
+
+        return jsonify({"rounds": rounds})
+
     except Exception as e:
-        return jsonify({"status": "unhealthy", "error": str(e)}), 500
+        print(f"Error in /api/rounds_history: {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/dse/sweep', methods=['POST'])
