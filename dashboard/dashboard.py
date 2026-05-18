@@ -232,12 +232,21 @@ class DashboardServer:
         @self.app.route('/api/loss')
         def get_loss_data():
             try:
+                # Limit loss to the currently active server session so the
+                # dashboard shows only rounds belonging to the live session.
+                session_id = self._get_active_session_id()
+                if not session_id:
+                    # No active session -> return empty series (chart stays empty)
+                    return jsonify({"rounds": [], "loss": []})
+
                 conn = psycopg2.connect(self.db_url)
                 cursor = conn.cursor()
                 cursor.execute("""
                     SELECT round_number, global_test_loss
-                    FROM round_metrics ORDER BY round_number
-                """)
+                    FROM round_metrics
+                    WHERE session_id = %s AND global_test_loss IS NOT NULL
+                    ORDER BY round_number
+                """, (session_id,))
                 data = cursor.fetchall()
                 conn.close()
                 return jsonify({

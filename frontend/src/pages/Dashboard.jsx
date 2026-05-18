@@ -5,6 +5,7 @@ import {
   getStatus, 
   getConfig,
   getAccuracyData,
+  getLossData,
   getCpuData,
   getClientsData, 
   getBandwidthData,
@@ -25,6 +26,7 @@ const [status, setStatus] = useState({});
   const [config, setConfig] = useState({});
   const [clients, setClients] = useState([]);
   const [accuracyData, setAccuracyData] = useState({ rounds: [], accuracy: [] });
+  const [lossData, setLossData] = useState({ rounds: [], loss: [] });
   const [cpuData, setCpuData] = useState({ rounds: [], cpu: [] });
   const [bandwidthData, setBandwidthData] = useState({ rounds: [], bandwidth_mb: [] });
   const [throughputData, setThroughputData] = useState({ rounds: [], throughput_mbps: [] });
@@ -91,6 +93,13 @@ const [status, setStatus] = useState({});
       } catch (e) {
         console.warn('Accuracy fetch failed:', e.message);
         accuracyRes = { data: null };
+      }
+
+      try {
+        lossRes = await getLossData();
+      } catch (e) {
+        console.warn('Loss fetch failed:', e.message);
+        lossRes = { data: null };
       }
       
       try {
@@ -201,6 +210,10 @@ const [status, setStatus] = useState({});
       // Accuracy data - check for non-empty rounds array
       if (accuracyRes && accuracyRes.data && accuracyRes.data.rounds && accuracyRes.data.rounds.length > 0) {
         setAccuracyData(accuracyRes.data);
+      }
+      // Loss data - check for non-empty rounds array
+      if (lossRes && lossRes.data && lossRes.data.rounds && lossRes.data.rounds.length > 0) {
+        setLossData(lossRes.data);
       }
       
       // CPU data - check for non-empty rounds array
@@ -328,6 +341,11 @@ const [status, setStatus] = useState({});
 const accuracyChartData = accuracyData.rounds.map((round, idx) => ({
     round,
     accuracy: accuracyData.accuracy[idx]
+  }));
+
+  const lossChartData = lossData.rounds.map((round, idx) => ({
+    round,
+    loss: lossData.loss[idx]
   }));
 
   const cpuChartData = cpuData.rounds.map((round, idx) => ({
@@ -695,20 +713,20 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
         {/* Charts Row 3 - Model Accuracy, CPU Usage and Energy */}
         <div className="grid-3" style={{ marginBottom: '20px' }}>
           <div className="card">
-            <h2 className="panel-title">🎯 Model Accuracy (%)</h2>
+            <h2 className="panel-title">📉 Global Test Loss</h2>
             <ResponsiveContainer width="100%" height={150}>
-              <LineChart data={accuracyChartData}>
+              <LineChart data={lossChartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#2d3348" />
                 <XAxis dataKey="round" stroke="#888" fontSize={10} />
-                <YAxis stroke="#888" fontSize={10} domain={[0, 100]} />
+                <YAxis stroke="#888" fontSize={10} />
                 <Tooltip 
                   contentStyle={{ background: '#252942', border: '1px solid #2d3348' }}
                   labelStyle={{ color: '#fff' }}
                 />
                 <Line 
                   type="monotone" 
-                  dataKey="accuracy" 
-                  stroke="#66bb6a" 
+                  dataKey="loss" 
+                  stroke="#ef5350" 
                   strokeWidth={2}
                   dot={false}
                 />

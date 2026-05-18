@@ -580,9 +580,9 @@
             <button class="btn btn-primary export-btn" onclick="exportData()">💾 Export to CSV</button>
 
             <div class="chart-container">
-                <div class="chart-title">🎯 Model Accuracy (%)</div>
+                <div class="chart-title">📉 Global Test Loss</div>
                 <div class="chart-wrapper">
-                    <canvas id="accuracyChart"></canvas>
+                    <canvas id="lossChart"></canvas>
                 </div>
             </div>
 
@@ -811,20 +811,20 @@
             }
         });
 
-        // Accuracy Chart - from round_metrics table
-        const accuracyChart = new Chart(document.getElementById('accuracyChart'), {
+        // Loss Chart (Global Test Loss) - from round_metrics table
+        const lossChart = new Chart(document.getElementById('lossChart'), {
             type: 'line',
             data: {
                 labels: [],
                 datasets: [{
                     data: [],
-                    borderColor: '#4fc3f7',
-                    backgroundColor: 'rgba(79, 195, 247, 0.2)',
+                    borderColor: '#ef5350',
+                    backgroundColor: 'rgba(239, 83, 80, 0.12)',
                     borderWidth: 2,
-                    tension: 0.4,
+                    tension: 0.3,
                     fill: true,
-                    pointRadius: 4,
-                    pointBackgroundColor: '#4fc3f7'
+                    pointRadius: 3,
+                    pointBackgroundColor: '#ef5350'
                 }]
             },
             options: {
@@ -836,8 +836,7 @@
                     y: { 
                         grid: { color: '#2d3348' }, 
                         ticks: { color: '#888', font: { size: 9 } },
-                        min: 0,
-                        max: 100
+                        beginAtZero: true
                     }
                 }
             }
@@ -938,9 +937,8 @@
         // Update dashboard
         async function updateDashboard() {
             try {
-                const [status, accuracy, loss, clients, bandwidth, latency, memory, energy, networkMetrics, history, cpu] = await Promise.all([
+                const [status, loss, clients, bandwidth, latency, memory, energy, networkMetrics, history, cpu] = await Promise.all([
                     fetch('/api/status').then(r => r.json()),
-                    fetch('/api/accuracy').then(r => r.json()),
                     fetch('/api/loss').then(r => r.json()),
                     fetch('/api/clients').then(r => r.json()),
                     fetch('/api/bandwidth').then(r => r.json()),
@@ -1009,10 +1007,10 @@
                 networkMetricsChart.data.datasets[1].data = networkMetrics.jitter || [];
                 networkMetricsChart.update('none');
 
-                // Update Accuracy and CPU charts
-                accuracyChart.data.labels = accuracy.rounds || [];
-                accuracyChart.data.datasets[0].data = accuracy.accuracy || [];
-                accuracyChart.update('none');
+                // Update Loss and CPU charts
+                lossChart.data.labels = loss.rounds || [];
+                lossChart.data.datasets[0].data = loss.loss || [];
+                lossChart.update('none');
 
                 cpuChart.data.labels = cpu.rounds || [];
                 cpuChart.data.datasets[0].data = cpu.cpu || [];

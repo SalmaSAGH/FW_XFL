@@ -1580,12 +1580,15 @@ def get_accuracy_data():
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
 
+        # Only return rounds belonging to the current server session so the
+        # frontend shows an empty chart at startup and accumulates values
+        # as rounds complete in this process lifetime.
         cursor.execute("""
             SELECT round_number, global_test_accuracy
             FROM round_metrics
-            WHERE global_test_accuracy IS NOT NULL
+            WHERE global_test_accuracy IS NOT NULL AND session_id = %s
             ORDER BY round_number
-        """)
+        """, (CURRENT_SESSION_ID,))
 
         data = cursor.fetchall()
         conn.close()
@@ -1605,12 +1608,13 @@ def get_loss_data():
         conn = psycopg2.connect(DB_URL)
         cursor = conn.cursor()
 
+        # Only return rounds for the current session to keep charts session-scoped
         cursor.execute("""
             SELECT round_number, global_test_loss
             FROM round_metrics
-            WHERE global_test_loss IS NOT NULL
+            WHERE global_test_loss IS NOT NULL AND session_id = %s
             ORDER BY round_number
-        """)
+        """, (CURRENT_SESSION_ID,))
 
         data = cursor.fetchall()
         conn.close()
