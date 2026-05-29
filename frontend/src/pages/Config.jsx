@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { setXflStrategy, startRound, saveConfig, getConfig } from '../services/api';
+import { setXflStrategy, startRound, saveConfig, getConfig, getStatus } from '../services/api';
 
 function Config() {
   const navigate = useNavigate();
@@ -33,6 +33,7 @@ function Config() {
   });
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState({ type: '', text: '' });
+  const [numRoundsToRun, setNumRoundsToRun] = useState(1);
 
   // Load config from server on mount
   useEffect(() => {
@@ -94,24 +95,113 @@ function Config() {
     setLoading(false);
   };
 
-  const handleStartRound = async () => {
+  const waitForRoundCompletion = async () => {
+    /**
+     * Wait for the current round to complete
+     */
+    const maxWaitTime = 60 * 60 * 1000; // 1 hour max
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < maxWaitTime) {
+      try {
+        const statusResponse = await getStatus();
+        const isRoundInProgress = statusResponse.data?.round_in_progress || false;
+        
+        if (!isRoundInProgress) {
+          return true; // Round completed
+        }
+        
+        // Wait 2 seconds before checking again
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (error) {
+        console.log('Error checking round status:', error);
+        // Continue waiting even if status check fails
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
+    
+    return false; // Timeout
+  };
+
+  const handleStartExperiment = async () => {
     setLoading(true);
     setMessage({ type: '', text: '' });
     
     try {
-      // Start a round
-      const response = await startRound();
-      if (response.data.status === 'started') {
-        setMessage({ type: 'success', text: `Round ${response.data.round} started successfully!` });
-        // Navigate to dashboard after a short delay
-        setTimeout(() => {
-          navigate('/dashboard');
-        }, 1500);
-      } else {
-        setMessage({ type: 'warning', text: response.data.message || 'Could not start round' });
+      const totalRounds = numRoundsToRun;
+      
+      // Save the number of rounds to be run in localStorage (as string)
+      localStorage.setItem('experimentRoundsToRun', String(totalRounds));
+      
+      let successCount = 0;
+      
+      for (let i = 1; i <= totalRounds; i++) {
+        setMessage({ 
+          type: 'info', 
+          text: `Starting round ${i}/${totalRounds}...` 
+        });
+        
+        try {
+          // Start the round
+          const response = await startRound();
+          
+          if (response.data.status === 'started' || response.data.status === 'queued') {
+            setMessage({ 
+              type: 'info', 
+              text: `Round ${i}/${totalRounds} started. Waiting for completion...` 
+            });
+            
+            // Wait for this round to complete
+            const completed = await waitForRoundCompletion();
+            
+            if (completed) {
+              successCount++;
+              setMessage({ 
+                type: 'success', 
+                text: `Round ${i}/${totalRounds} completed successfully!` 
+              });
+            } else {
+              setMessage({ 
+                type: 'warning', 
+                text: `Round ${i}/${totalRounds} did not complete within timeout` 
+              });
+            }
+            
+            // Wait 1 second before starting next round
+            if (i < totalRounds) {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+          } else if (response.data.status === 'completed') {
+            setMessage({ 
+              type: 'warning', 
+              text: `All rounds already completed on server` 
+            });
+            break;
+          } else {
+            setMessage({ 
+              type: 'warning', 
+              text: `Round ${i}: ${response.data.message || 'Could not start round'}` 
+            });
+          }
+        } catch (error) {
+          setMessage({ 
+            type: 'error', 
+            text: `Error starting round ${i}: ${error.message}` 
+          });
+        }
       }
+      
+      setMessage({ 
+        type: 'success', 
+        text: `Experiment completed! ${successCount}/${totalRounds} rounds started successfully.` 
+      });
+      
+      // Navigate to dashboard after a short delay
+      setTimeout(() => {
+        navigate('/dashboard');
+      }, 2000);
     } catch (error) {
-      setMessage({ type: 'error', text: 'Error starting round: ' + error.message });
+      setMessage({ type: 'error', text: 'Error starting experiment: ' + error.message });
     }
     
     setLoading(false);
@@ -535,7 +625,7 @@ function Config() {
           <div className="card">
             <h2 className="panel-title">Actions</h2>
             
-            <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
               <button 
                 className="btn btn-primary"
                 onClick={handleConfirm}
@@ -544,12 +634,25 @@ function Config() {
                 ✓ Confirm Configuration
               </button>
               
+              <div className="form-group" style={{ marginBottom: '0' }}>
+                <label style={{ marginBottom: '8px', display: 'block' }}>Number of Rounds to Run</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="100"
+                  value={numRoundsToRun}
+                  onChange={(e) => setNumRoundsToRun(parseInt(e.target.value) || 1)}
+                  disabled={loading}
+                  style={{ width: '100px', padding: '8px' }}
+                />
+              </div>
+              
               <button 
                 className="btn btn-success"
-                onClick={handleStartRound}
+                onClick={handleStartExperiment}
                 disabled={loading}
               >
-                ▶ Start Round
+                ▶ Start Experiment
               </button>
               
               <button 

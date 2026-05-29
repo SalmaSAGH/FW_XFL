@@ -1037,7 +1037,16 @@ class FLServer:
             
             total_clients = int(fl_config.get('numClients', 40))
             latest_accuracy = None
-            
+
+            try:
+                from .physical_client_manager import physical_client_manager
+                if physical_client_manager:
+                    active_physical_clients = physical_client_manager.get_active_clients()
+                    if active_physical_clients:
+                        total_clients = len(active_physical_clients)
+            except Exception:
+                pass
+
             try:
                 conn = psycopg2.connect(DB_URL)
                 cursor = conn.cursor()
@@ -1684,6 +1693,8 @@ def get_clients_data():
     round_in_progress = False
     submitted_clients = set()
     selected_clients = set()
+    physical_client_map = {}
+    physical_active_ids = None
 
     if fl_server is not None:
         server_status = fl_server.get_server_status()
@@ -1696,6 +1707,21 @@ def get_clients_data():
         else:
             selected_clients = set()
 
+    if not round_in_progress:
+        try:
+            from .physical_client_manager import physical_client_manager
+            if physical_client_manager:
+                all_physical_clients = physical_client_manager.get_all_clients()
+                physical_client_map = {c['client_id']: c for c in all_physical_clients}
+
+                active_ids = physical_client_manager.get_active_clients()
+                if active_ids:
+                    physical_active_ids = set(active_ids)
+                elif physical_client_map:
+                    physical_active_ids = set(physical_client_map.keys())
+        except Exception as e:
+            print(f"WARNING: Physical client manager unavailable in /api/clients: {e}")
+
     clients = []
     for client_id in range(expected_clients):
         if round_in_progress:
@@ -1706,7 +1732,17 @@ def get_clients_data():
             else:
                 state = "idle"
         else:
-            if client_id in active_in_last_round:
+            if physical_active_ids is not None:
+                physical_status = physical_client_map.get(client_id, {}).get('status', 'disconnected')
+                if physical_status == 'training':
+                    state = 'training'
+                elif physical_status in ('connected', 'idle'):
+                    state = 'active'
+                elif physical_status == 'error':
+                    state = 'error'
+                else:
+                    state = 'idle'
+            elif client_id in active_in_last_round:
                 state = "active"
             else:
                 state = "idle"

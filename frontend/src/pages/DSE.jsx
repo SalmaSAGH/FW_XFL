@@ -131,17 +131,28 @@ function DSE() {
         ])
       );
 
+      // Correction du mapping stratégie/xflStrategy
+      let strategy = aggregationStrategy;
+      let xflStrategy = xflStrategyValue;
+      if (aggregationStrategy.startsWith('xfl')) {
+        strategy = 'xfl';
+        xflStrategy = xflStrategyValue; // xfl_cyclic, xfl_sparsification, etc.
+      } else if (aggregationStrategy === 'fedavg') {
+        strategy = 'fedavg';
+        xflStrategy = 'all_layers';
+      }
+
       const sweepConfig = {
         params: {
           ...sweepParams,
-          strategy: [aggregationStrategy],
-          xflStrategy: [xflStrategyValue]
+          strategy: [strategy],
+          xflStrategy: [xflStrategy]
         },
         numShortRounds: Number(params.numShortRounds.value),
         dataset: selectedDataset,
         searchStrategy,
         maxConfigs,
-      }; 
+      };
 
       const response = await runDseSweep(sweepConfig);
       if (response.data?.session_id) {
@@ -415,26 +426,44 @@ function DSE() {
             </div>
           )}
 
-          {/* Dataset Selection - REQUIRED */}
-          <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #db1515', backgroundColor: selectedDataset ? '#2d3348' : '#ffffff' }}>
-            <h2 className="panel-title" style={{color: selectedDataset ? '#ffffff' : '#000000', fontWeight: 'bold'}}>📊 Select Dataset (Required)</h2>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '15px', marginTop: '15px' }}>
+          {/* Dataset Selection (required) - clickable cards */}
+          <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #1976d2', backgroundColor: '#0f1724', color: '#fff', padding: '18px' }}>
+            <h2 className="panel-title" style={{ color: '#fff', fontWeight: '700' }}>📚 Select Dataset (required)</h2>
+            <p style={{ marginTop: '8px', color: '#9aa6bf', fontSize: '13px' }}>Choose the dataset to run the sweep on. Selection is required.</p>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '14px', marginTop: '14px' }}>
               {AVAILABLE_DATASETS.map((dataset) => (
-                <label key={dataset} style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', padding: '10px', borderRadius: '4px', backgroundColor: selectedDataset === dataset ? '#bbdefb' : 'transparent', transition: 'background-color 0.2s' }}>
-                  <input
-                    type="radio"
-                    name="dataset"
-                    value={dataset}
-                    checked={selectedDataset === dataset}
-                    onChange={(e) => setSelectedDataset(e.target.value)}
-                    style={{ marginRight: '10px', cursor: 'pointer' }}
-                  />
-                  <span style={{ fontWeight: selectedDataset === dataset ? 'bold' : 'normal' }}>{dataset}</span>
-                </label>
+                <div
+                  key={dataset}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedDataset(dataset)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelectedDataset(dataset); }}
+                  aria-pressed={selectedDataset === dataset}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'flex-start',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    padding: '14px',
+                    borderRadius: '8px',
+                    border: selectedDataset === dataset ? '2px solid #4fc3f7' : '1px solid rgba(255,255,255,0.06)',
+                    background: selectedDataset === dataset ? 'linear-gradient(90deg, rgba(79,195,247,0.08), rgba(79,195,247,0.03))' : 'transparent',
+                    boxShadow: selectedDataset === dataset ? '0 6px 18px rgba(79,195,247,0.08)' : 'none',
+                    transition: 'transform 0.12s, box-shadow 0.12s',
+                    transform: selectedDataset === dataset ? 'translateY(-2px)' : 'none'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <div style={{ width: '14px', height: '14px', borderRadius: '3px', marginRight: '10px', display: 'inline-block', background: selectedDataset === dataset ? '#4fc3f7' : 'transparent', border: selectedDataset === dataset ? 'none' : '2px solid rgba(255,255,255,0.12)' }} />
+                    <div style={{ fontSize: '15px', fontWeight: selectedDataset === dataset ? 700 : 500 }}>{dataset}</div>
+                  </div>
+                  <div style={{ marginTop: '8px', fontSize: '12px', color: '#9aa6bf' }}>{dataset === 'CIFAR100' ? '100 classes (color images)' : dataset === 'CIFAR10' ? '10 classes (color images)' : dataset === 'EMNIST' ? 'Extended MNIST (letters+digits)' : dataset === 'FashionMNIST' ? 'Clothing images' : 'Handwritten digit images'}</div>
+                </div>
               ))}
             </div>
             {!selectedDataset && (
-              <div style={{ color: '#d32f2f', marginTop: '10px', fontWeight: 'bold' }}>⚠️ Un dataset doit être sélectionné pour procéder</div>
+              <div style={{ color: '#ffb4a2', marginTop: '12px', fontWeight: 600 }}>⚠️ Please select a dataset to continue</div>
             )}
           </div>
 
@@ -515,7 +544,7 @@ function DSE() {
                 <strong>Best accuracy:</strong> {displayBestAccuracy.toFixed(2)}%
                 {currentSweepStatus === 'completed' && (
                   <button className="btn" style={{ marginLeft: '10px' }} onClick={() => loadSessionResults(currentSweepSessionId)}>
-                    Charger les résultats
+                    Load results
                   </button>
                 )}
               </div>
@@ -541,7 +570,7 @@ function DSE() {
                   disabled={sessions.length === 0}
                   style={{ background: selectedSession === 'all' ? '#4fc3f7' : '#252942', opacity: sessions.length === 0 ? 0.6 : 1 }}
                 >
-                  Toutes les sessions
+                  All Sessions
                 </button>
               </div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
@@ -564,7 +593,7 @@ function DSE() {
             <>
               {/* View Mode Toggle */}
               <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #ff9800' }}>
-                <h2 className="panel-title">👁️ Affichage des Résultats</h2>
+                <h2 className="panel-title">👁️ Results Display</h2>
                 <div style={{ display: 'flex', gap: '15px', marginTop: '15px', flexWrap: 'wrap' }}>
                   <button
                     onClick={() => setViewMode('all')}
@@ -580,7 +609,7 @@ function DSE() {
                       transition: 'all 0.3s'
                     }}
                   >
-                    📊 Tous les Résultats
+                    📊 All Results
                   </button>
                   <button
                     onClick={() => setViewMode('filtered')}
@@ -596,7 +625,7 @@ function DSE() {
                       transition: 'all 0.3s'
                     }}
                   >
-                    🔍 Filtrer par Dataset
+                    🔍 Filter by Dataset
                   </button>
                 </div>
 
@@ -604,7 +633,7 @@ function DSE() {
                 {viewMode === 'filtered' && Object.keys(resultsByDataset).length > 0 && (
                   <div style={{ marginTop: '20px' }}>
                     <p style={{ color: '#4fc3f7', fontWeight: 'bold', marginBottom: '10px' }}>
-                      📌 Sélectionnez un dataset pour voir ses résultats :
+                      Select a dataset to view its results:
                     </p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px' }}>
                       {Object.keys(resultsByDataset).map(dataset => (
@@ -624,7 +653,7 @@ function DSE() {
                             boxShadow: activeDatasetTab === dataset ? '0 0 10px rgba(79, 195, 247, 0.3)' : 'none'
                           }}
                         >
-                          <div style={{ fontSize: '20px', marginBottom: '5px' }}>📁</div>
+                          
                           {dataset}
                           <div style={{ fontSize: '12px', marginTop: '5px', opacity: 0.8 }}>
                             {resultsByDataset[dataset].length} configs
@@ -638,12 +667,12 @@ function DSE() {
                 {/* Info Message */}
                 {viewMode === 'all' && (
                   <div style={{ marginTop: '15px', padding: '12px', background: '#1d2436', borderLeft: '3px solid #4fc3f7', borderRadius: '4px', color: '#4fc3f7' }}>
-                    ℹ️ Mode "Tous les Résultats": Affichage de toutes les configurations testées (tous les datasets mélangés)
+                    ℹ️ "All Results" mode: showing all tested configurations (all datasets mixed)
                   </div>
                 )}
                 {viewMode === 'filtered' && (
                   <div style={{ marginTop: '15px', padding: '12px', background: '#1d2436', borderLeft: '3px solid #ff9800', borderRadius: '4px', color: '#ff9800' }}>
-                    ℹ️ Mode "Filtrer par Dataset": Affichage des configurations du dataset sélectionné uniquement
+                    ℹ️ "Filter by Dataset" mode: showing configurations for the selected dataset only
                   </div>
                 )}
               </div>
@@ -696,14 +725,18 @@ function DSE() {
                     )}
                     {viewMode === 'all' && (
                       <div style={{ gridColumn: '1 / -1', color: '#4fc3f7', fontSize: '12px', fontStyle: 'italic', backgroundColor: '#1d2436', padding: '8px', borderRadius: '4px' }}>
-                        📊 Affichage pour tous les résultats (tous les datasets confondus)
+                        📊 Display for all results (all datasets combined)
+
                       </div>
                     )}
                     <div><strong>Learning Rate</strong><br />{bestConfig.config.learningRate}</div>
                     <div><strong>Epochs</strong><br />{bestConfig.config.localEpochs}</div>
                     <div><strong>Batch Size</strong><br />{bestConfig.config.batchSize}</div>
                     <div><strong>Strategy</strong><br />{bestConfig.config.strategy || '-'}</div>
-                    <div><strong>XFL variant</strong><br />{bestConfig.config.xflStrategy || '-'}</div>
+                    {String(bestConfig.config.strategy).toLowerCase() === 'xfl' && (
+                      <div><strong>XFL variant</strong><br />{bestConfig.config.xflStrategy || '-'}</div>
+                    )}
+
                     <div><strong>Clients/Round</strong><br />{bestConfig.config.clientsPerRound || '-'}</div>
                     <div><strong>Accuracy</strong><br />{bestConfig.metrics?.final_accuracy?.toFixed(2) || '-'}%</div>
                     <div><strong>Time</strong><br />{bestConfig.metrics?.total_time?.toFixed(1) || '-'} s</div>

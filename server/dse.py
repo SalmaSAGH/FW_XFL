@@ -293,6 +293,21 @@ def _run_federated_config(config: Dict[str, Any]) -> Dict[str, Any]:
     for round_idx in range(1, num_rounds + 1):
         client_weights = []
         client_samples = []
+        
+        # normalize XFL strategy names coming from config
+        # UI sends xflStrategy like xfl_cyclic/xfl_sparsification/xfl_quantization
+        # but this DSE code uses xfl_strategy variable; keep both variants mapped.
+        if xfl_strategy in ['all_layers', None, 'fedavg']:
+            xfl_strategy = 'all_layers'
+        
+        # map known UI values to internal names used by our selector
+        if xfl_strategy == 'xfl_cyclic':
+            xfl_strategy = 'xfl_cyclic'
+        elif xfl_strategy in ['xfl_sparsification', 'xfl_sparsifications']:
+            xfl_strategy = 'xfl_sparsification'
+        elif xfl_strategy == 'xfl_quantization':
+            xfl_strategy = 'xfl_quantization'
+
 
         selected_clients = rng.sample(list(range(total_clients)), clients_per_round)
         print(f"[DSE] Round {round_idx}/{num_rounds} - selected clients: {selected_clients}")
@@ -318,7 +333,47 @@ def _run_federated_config(config: Dict[str, Any]) -> Dict[str, Any]:
             )
 
             trainer.train(client_loader, num_epochs=local_epochs)
-            client_state = {name: tensor.cpu().clone() for name, tensor in trainer.get_model_weights().items()}
+
+            # Apply XFL layer selection BEFORE aggregation (to make DSE consistent with real FL clients)
+            trained_weights = trainer.get_model_weights()
+            state_dict_keys = list(trained_weights.keys())
+            
+            def _select_weights_xfl(weights_dict, xfl_strat: str, client_id_local: int, round_idx: int):
+                # weights_dict: OrderedDict(name->tensor)
+                if xfl_strat == 'all_layers' or xfl_strat == 'fedavg' or xfl_strat is None:
+                    return weights_dict
+
+                # cyclic: pick a layer prefix cyclically based on client and round
+                if xfl_strat.startswith('xfl_cyclic') or xfl_strat == 'xfl_cyclic' or xfl_strat.startswith('cyclic'):
+                    layer_prefixes = sorted(set(k.split('.')[0] for k in state_dict_keys))
+                    if not layer_prefixes:
+                        return weights_dict
+                    layer_index = (client_id_local + round_idx - 1) % len(layer_prefixes)
+                    selected_prefix = layer_prefixes[layer_index]
+                    return type(weights_dict)((k, v) for k, v in weights_dict.items() if k.startswith(selected_prefix))
+
+                # sparsification: best-effort using conv1/conv2 naming; fallback to cyclic if keys missing
+                if xfl_strat == 'xfl_sparsification' or xfl_strat.startswith('xfl_sparsification') or 'sparsification' in xfl_strat:
+                    target_layers = ['conv1.weight', 'conv1.bias', 'conv2.weight', 'conv2.bias']
+                    selected = [(n, w) for n, w in weights_dict.items() if n in target_layers]
+                    if len(selected) == 0:
+                        # fallback: cyclic prefix selection
+                        layer_prefixes = sorted(set(k.split('.')[0] for k in state_dict_keys))
+                        layer_index = (client_id_local + round_idx - 1) % len(layer_prefixes) if layer_prefixes else 0
+                        selected_prefix = layer_prefixes[layer_index] if layer_prefixes else ''
+                        return type(weights_dict)((k, v) for k, v in weights_dict.items() if k.startswith(selected_prefix))
+                    return type(weights_dict)(selected)
+
+                # quantization: send all layers (quantization happens in real client pipeline)
+                if xfl_strat == 'xfl_quantization' or xfl_strat.startswith('xfl_quantization') or 'quantization' in xfl_strat:
+                    return weights_dict
+
+                # default: send all layers
+                return weights_dict
+
+            selected_state = _select_weights_xfl(trained_weights, xfl_strategy, client_id, round_idx)
+            client_state = {name: tensor.cpu().clone() for name, tensor in selected_state.items()}
+
             client_weights.append(client_state)
             client_samples.append(len(client_loader.dataset))
 

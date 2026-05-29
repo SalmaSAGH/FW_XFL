@@ -194,7 +194,7 @@ class PhysicalClientManager:
         with self._lock:
             return [
                 c.client_id for c in self.clients.values()
-                if c.status in ('connected', 'training') and c.last_seen >= cutoff
+                if c.status in ('connected', 'training', 'idle') and c.last_seen >= cutoff
             ]
     
     def start_monitoring(self, interval: int = 30):
