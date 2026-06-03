@@ -46,7 +46,6 @@ const [status, setStatus] = useState({});
   const [consecutiveErrors, setConsecutiveErrors] = useState(0);
   const [lastSuccessfulFetch, setLastSuccessfulFetch] = useState(null);
   const [initialLoading, setInitialLoading] = useState(true);
-  const [experimentRoundsToRun, setExperimentRoundsToRun] = useState(null);
 
   // Get number of devices from config or use default
   const NUM_DEVICES = status.total_clients || 40;
@@ -54,21 +53,6 @@ const [status, setStatus] = useState({});
   useEffect(() => {
     // Initial fetch
     fetchAllData();
-    
-    // Load experiment rounds to run from localStorage
-    const savedRounds = localStorage.getItem('experimentRoundsToRun');
-    if (savedRounds) {
-      setExperimentRoundsToRun(parseInt(savedRounds));
-    }
-    
-    // Listen for localStorage changes (from other tabs/windows or Config page)
-    const handleStorageChange = (e) => {
-      if (e.key === 'experimentRoundsToRun' && e.newValue) {
-        setExperimentRoundsToRun(parseInt(e.newValue));
-      }
-    };
-    
-    window.addEventListener('storage', handleStorageChange);
     
     // Set up polling interval
     const interval = setInterval(fetchAllData, 2000);
@@ -82,17 +66,10 @@ const [status, setStatus] = useState({});
     return () => {
       clearInterval(interval);
       clearTimeout(safetyTimeout);
-      window.removeEventListener('storage', handleStorageChange);
     };
   }, []);
 
   const fetchAllData = async () => {
-    // Check if experiment rounds to run has been set (in case Dashboard was already open when Config saved it)
-    const savedRounds = localStorage.getItem('experimentRoundsToRun');
-    if (savedRounds && !experimentRoundsToRun) {
-      setExperimentRoundsToRun(parseInt(savedRounds));
-    }
-    
     // If server was unavailable, add a small delay before retrying
     if (!serverAvailable) {
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -348,14 +325,14 @@ const [status, setStatus] = useState({});
     try {
       const response = await resetMetrics();
       if (response.data && response.data.status === 'ok') {
-        setResetStatus('Données réinitialisées.');
+        setResetStatus('data reset.');
         fetchAllData();
       } else {
-        setMessage({ type: 'error', text: 'Impossible de réinitialiser les données.' });
+        setMessage({ type: 'error', text: 'Failed to reset data.' });
       }
     } catch (error) {
       console.error('Reset failed:', error);
-      setMessage({ type: 'error', text: 'Échec de la réinitialisation : ' + (error.response?.data?.error || error.message) });
+      setMessage({ type: 'error', text: 'Failed to reset data : ' + (error.response?.data?.error || error.message) });
     } finally {
       setResetting(false);
     }
@@ -402,47 +379,55 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
     jitter: networkMetrics.jitter[idx]
   }));
 
-  const makeSeries = (rounds, values) => rounds
-    .map((round, idx) => ({
-      round,
-      value: values[idx] != null ? Number(values[idx]) : null
-    }))
-    .filter(item => item.round != null && item.value != null && !Number.isNaN(item.value));
+  const effectiveAccuracySeries = (accuracyData.accuracy && accuracyData.accuracy.length > 0)
+    ? accuracyData.accuracy.filter(v => v != null)
+    : history.map(h => h.accuracy).filter(v => v != null);
+
+  const realLossSeries = history.map(h => h.loss).filter(v => v != null);
+  const realAccuracySeries = history.map(h => h.accuracy).filter(v => v != null);
 
   const computeConvergence = (series, label) => {
-    if (series.length < 2) return null;
+    if (series.length < 2) {
+      return null;
+    }
+    const recent = series.slice(-3);
+    if (recent.length < 2) {
+      return null;
+    }
 
-    const windowSize = 5;
-    const window = series.slice(-windowSize);
-    const first = window[0];
-    const last = window[window.length - 1];
-    const roundDelta = last.round - first.round || window.length - 1;
-    if (roundDelta < 1) return null;
+    const start = recent[0];
+    const end = recent[recent.length - 1];
+    if (start == null || end == null) {
+      return null;
+    }
 
-    const rawDelta = last.value - first.value;
-    const initial = Math.abs(first.value) || 1;
-    const sign = label === 'loss' ? 1 : -1;
-    const percentChange = ((first.value - last.value) * sign / initial) * 100;
-    const changePerRound = percentChange / roundDelta;
+    const safeStart = Math.abs(start) < 1e-9 ? 1e-9 : start;
+    let change;
+    let status;
 
-    const trend = label === 'loss'
-      ? rawDelta < 0 ? 'Converging' : rawDelta > 0 ? 'Diverging' : 'Stable'
-      : rawDelta > 0 ? 'Converging' : rawDelta < 0 ? 'Diverging' : 'Stable';
+    if (label === 'loss') {
+      change = ((safeStart - end) / Math.abs(safeStart)) * 100;
+      status = change >= 0 ? 'Converging' : 'Diverging';
+      return `${status} ${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+    }
 
-    return `${trend}: ${percentChange >= 0 ? '+' : ''}${percentChange.toFixed(2)}% over ${roundDelta} round${roundDelta > 1 ? 's' : ''} (${changePerRound >= 0 ? '+' : ''}${changePerRound.toFixed(2)}%/round)`;
+    change = ((end - safeStart) / Math.abs(safeStart)) * 100;
+    status = change >= 0 ? 'Converging' : 'Diverging';
+    return `${status} ${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
   };
 
-  const lossSeries = makeSeries(lossData.rounds, lossData.loss);
-  let accuracySeries = makeSeries(accuracyData.rounds, accuracyData.accuracy);
-  if (accuracySeries.length === 0 && history.length > 0) {
-    accuracySeries = history
-      .map(h => ({ round: h.round, value: h.accuracy != null ? Number(h.accuracy) : null }))
-      .filter(item => item.round != null && item.value != null && !Number.isNaN(item.value));
-  }
-
-  const convergenceValue = computeConvergence(lossSeries, 'loss')
-    || computeConvergence(accuracySeries, 'accuracy')
-    || 'N/A';
+  const convergenceValue = (() => {
+    const lossConvergence = computeConvergence(realLossSeries, 'loss');
+    if (lossConvergence) {
+      return lossConvergence;
+    }
+    const historyAccuracyConvergence = computeConvergence(realAccuracySeries, 'accuracy');
+    if (historyAccuracyConvergence) {
+      return historyAccuracyConvergence;
+    }
+    const fallbackAccuracyConvergence = computeConvergence(effectiveAccuracySeries, 'accuracy');
+    return fallbackAccuracyConvergence || 'N/A';
+  })();
 
   const completedRoundsCount = history.filter(h => h.accuracy != null).length;
   const targetRounds = status.total_rounds || config.numRounds || 0;
@@ -480,7 +465,7 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
             <a href="#" onClick={() => navigate('/dashboard')} className="active">Dashboard</a>
             <a href="#" onClick={() => navigate('/history')}>History</a>
             <button className="btn btn-secondary" onClick={handleResetData} disabled={resetting} style={{ marginRight: '10px' }}>
-              {resetting ? 'Réinitialisation...' : 'Réinitialiser'}
+              {resetting ? 'Resetting...' : 'Reset'}
             </button>
             <button className="logout-btn" onClick={handleLogout}>Logout</button>
           </div>
@@ -513,7 +498,7 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
           <a href="#" onClick={() => navigate('/dse')}>DSE</a>
           <a href="#" onClick={() => navigate('/history')}>History</a>
           <button className="btn btn-secondary" onClick={handleResetData} disabled={resetting} style={{ marginRight: '10px' }}>
-            {resetting ? 'Réinitialisation...' : 'Réinitialiser'}
+            {resetting ? 'Resetting...' : 'Reset'}
           </button>
           <button className="logout-btn" onClick={handleLogout}>Logout</button>
         </div>
@@ -577,58 +562,7 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
           </div>
         </div>
 
-        {/* Rounds Progression Indicator */}
-        <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #4fc3f7' }}>
-          <h2 className="panel-title">📊 Rounds Progression</h2>
-          <div style={{ marginTop: '15px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <span style={{ fontSize: '14px', fontWeight: '600' }}>
-                Completed: <span style={{ color: '#4fc3f7', fontSize: '16px' }}>{status.current_round || 0}</span> / <span style={{ color: '#888', fontSize: '16px' }}>{experimentRoundsToRun || status.total_rounds || '?'}</span> rounds
-              </span>
-              <span style={{ 
-                fontSize: '14px', 
-                fontWeight: '700',
-                color: '#66bb6a',
-                background: 'rgba(102, 187, 106, 0.2)',
-                padding: '6px 12px',
-                borderRadius: '20px'
-              }}>
-                {(experimentRoundsToRun || status.total_rounds) ? Math.round(((status.current_round || 0) / (experimentRoundsToRun || status.total_rounds)) * 100) : 0}%
-              </span>
-            </div>
-            <div className="progress-bar-bg" style={{ height: '24px', borderRadius: '12px', background: 'rgba(79, 195, 247, 0.15)', overflow: 'hidden' }}>
-              <div 
-                className="progress-bar-fill" 
-                style={{ 
-                  width: `${(experimentRoundsToRun || status.total_rounds) ? Math.round(((status.current_round || 0) / (experimentRoundsToRun || status.total_rounds)) * 100) : 0}%`,
-                  height: '100%',
-                  background: `linear-gradient(90deg, #4fc3f7 0%, #1e88e5 100%)`,
-                  transition: 'width 0.3s ease',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'flex-end',
-                  paddingRight: '8px'
-                }}
-              >
-                <span style={{ fontSize: '12px', fontWeight: '600', color: '#fff' }}>
-                  {(experimentRoundsToRun || status.total_rounds) ? Math.round(((status.current_round || 0) / (experimentRoundsToRun || status.total_rounds)) * 100) : 0}%
-                </span>
-              </div>
-            </div>
-            {status.round_in_progress && (
-              <div style={{ marginTop: '12px', padding: '10px', background: 'rgba(255, 193, 7, 0.1)', borderLeft: '3px solid #ffc107', borderRadius: '4px' }}>
-                <div style={{ fontSize: '13px', color: '#ffc107', fontWeight: '600' }}>
-                  ⏳ Round {status.current_round || 0} in progress...
-                </div>
-                <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
-                  Waiting for {(status.clients_expected || 0) - (status.submissions_received || 0)} client(s)
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Current Configuration Parameters Display */}
+{/* Current Configuration Parameters Display */}
         <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #ab47bc' }}>
           <h2 className="panel-title">⚙️ Current Configuration</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '15px', marginTop: '15px' }}>
@@ -657,10 +591,33 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
               <div style={{ fontSize: '12px', fontWeight: '600', color: '#66bb6a', marginBottom: '8px' }}>📊 Data</div>
               <div style={{ fontSize: '11px', color: '#888' }}>Dataset: <span style={{ color: '#fff' }}>{config.dataset || 'MNIST'}</span></div>
               <div style={{ fontSize: '11px', color: '#888' }}>Distribution: <span style={{ color: '#fff' }}>{config.dataDistribution === 'iid' ? 'IID' : 'Non-IID'}</span></div>
-              <div style={{ fontSize: '11px', color: '#888' }}>Model: <span style={{ color: '#fff' }}>{config.model || 'SimpleCNN'}</span></div>
+              <div style={{ fontSize: '11px', color: '#888' }}>Model: <span style={{ color: '#fff' }}>{config.model || SimpleCNN}</span></div>
             </div>
           </div>
         </div>
+
+        {/* Progress Bar */}
+        {status.round_in_progress && (
+          <div className="progress-container" style={{ marginBottom: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
+              <span className="panel-title">Round Progress</span>
+              <span style={{ color: '#4fc3f7', fontWeight: '600' }}>
+                {status.submissions_received || 0} / {status.clients_expected || 0} clients
+              </span>
+            </div>
+            <div className="progress-bar-bg">
+              <div 
+                className="progress-bar-fill" 
+                style={{ width: `${status.clients_expected ? Math.round((status.submissions_received / status.clients_expected) * 100) : 0}%` }}
+              ></div>
+              <div className="progress-text">
+                {status.clients_expected ? Math.round((status.submissions_received / status.clients_expected) * 100) : 0}%
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Testbed Grid - Full Width */}
         <div className="card" style={{ marginBottom: '20px' }}>
           <h2 className="panel-title">Testbed Monitoring ({NUM_DEVICES} Raspberry Pi)</h2>
           
@@ -911,17 +868,17 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
                 borderRadius: '4px'
               }}>
                 <div style={{ fontSize: '12px' }}>
-                  <span style={{ color: '#888' }}>Clients Affectés:</span>
+                  <span style={{ color: '#888' }}>Assigned Clients:</span>
                   <span style={{ color: '#ff6b6b', fontWeight: '700', marginLeft: '5px' }}>{resourceAlerts.length}</span>
                 </div>
                 <div style={{ fontSize: '12px' }}>
-                  <span style={{ color: '#888' }}>CPU Dépasse:</span>
+                  <span style={{ color: '#888' }}>CPU Limit Exceeded:</span>
                   <span style={{ color: '#ffa726', fontWeight: '700', marginLeft: '5px' }}>
                     {resourceAlerts.filter(a => a.cpu_limit_exceeded).length}
                   </span>
                 </div>
                 <div style={{ fontSize: '12px' }}>
-                  <span style={{ color: '#888' }}>RAM Dépasse:</span>
+                  <span style={{ color: '#888' }}>RAM Limit Exceeded:</span>
                   <span style={{ color: '#ffa726', fontWeight: '700', marginLeft: '5px' }}>
                     {resourceAlerts.filter(a => a.ram_limit_exceeded).length}
                   </span>
@@ -1080,7 +1037,7 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
 
         {/* System Health & Alerts */}
         <div className="card">
-          <h2 className="panel-title">🩺 System Health & Alerts</h2>
+          <h2 className="panel-title"> System Health & Alerts</h2>
 
           {/* Resource Alerts */}
           {resourceAlerts && resourceAlerts.length > 0 && (

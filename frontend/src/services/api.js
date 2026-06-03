@@ -5,7 +5,7 @@ const API_BASE_URL = '/api';
 // Create axios instance
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000, // Increased to 30 seconds for long-running operations
+  timeout: 10000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -46,6 +46,7 @@ export const verifyToken = (token) =>
 // Status API
 export const getStatus = () => api.get('/status');
 export const startRound = () => api.post('/start_round');
+export const startExperiment = (rounds) => api.post('/start_experiment', { rounds });
 export const setXflStrategy = (strategy, param) => 
   api.post('/xfl/set_strategy', { strategy, param });
 export const saveConfig = (config) => 

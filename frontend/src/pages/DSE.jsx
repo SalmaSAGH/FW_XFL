@@ -265,7 +265,7 @@ function DSE() {
       
       setSweepResults(allResults);
       setSelectedSession('all');
-      setMessage({ type: 'success', text: `Chargé toutes les sessions DSE (${response.data.session_count || targetSessions.length} sessions, ${allResults.length} configs)` });
+      setMessage({ type: 'success', text: `All DSE sessions loaded (${response.data.session_count || targetSessions.length} sessions, ${allResults.length} configs)` });
       return;
     } catch (error) {
       console.warn('getDseAllResults failed, falling back to per-session fetch', error);
@@ -297,7 +297,7 @@ function DSE() {
 
       setSweepResults(allResults);
       setSelectedSession('all');
-      setMessage({ type: 'success', text: `Chargé toutes les sessions DSE (${targetSessions.length} sessions, ${allResults.length} configs)` });
+      setMessage({ type: 'success', text: `All DSE sessions loaded (${targetSessions.length} sessions, ${allResults.length} configs)` });
 
       const failed = responses.filter((r) => r.status === 'rejected');
       if (failed.length > 0) {
@@ -319,18 +319,18 @@ function DSE() {
     try {
       const response = await resetDse();
       if (response.data && response.data.status === 'ok') {
-        setMessage({ type: 'success', text: 'Données DSE réinitialisées.' });
+        setMessage({ type: 'success', text: 'DSE data reset.' });
         setSweepResults([]);
         setSessions([]);
         setSelectedSession(null);
         clearSweepSessionId();
         loadSessions();
       } else {
-        setMessage({ type: 'error', text: 'Impossible de réinitialiser les données DSE.' });
+        setMessage({ type: 'error', text: 'Failed to reset DSE data.' });
       }
     } catch (err) {
       console.error('Reset failed:', err);
-      setMessage({ type: 'error', text: 'Échec de la réinitialisation : ' + (err.response?.data?.error || err.message) });
+      setMessage({ type: 'error', text: 'Failed to reset data : ' + (err.response?.data?.error || err.message) });
     } finally {
       setResetting(false);
     }
@@ -408,7 +408,7 @@ function DSE() {
           <a href="#" onClick={() => navigate('/dse')} className="active">DSE</a>
           <a href="#" onClick={() => navigate('/history')}>History</a>
           <button className="btn btn-secondary" onClick={handleResetData} disabled={resetting} style={{ marginRight: '10px' }}>
-            {resetting ? 'Réinitialisation...' : 'Réinitialiser'}
+            {resetting ? 'Resetting...' : 'Reset'}
           </button>
           <button className="logout-btn" onClick={handleLogout}>Logout</button>
         </div>
@@ -428,7 +428,7 @@ function DSE() {
 
           {/* Dataset Selection (required) - clickable cards */}
           <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #1976d2', backgroundColor: '#0f1724', color: '#fff', padding: '18px' }}>
-            <h2 className="panel-title" style={{ color: '#fff', fontWeight: '700' }}>📚 Select Dataset (required)</h2>
+            <h2 className="panel-title" style={{ color: '#fff', fontWeight: '700' }}>Select Dataset (required)</h2>
             <p style={{ marginTop: '8px', color: '#9aa6bf', fontSize: '13px' }}>Choose the dataset to run the sweep on. Selection is required.</p>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '14px', marginTop: '14px' }}>
               {AVAILABLE_DATASETS.map((dataset) => (

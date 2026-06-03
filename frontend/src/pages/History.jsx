@@ -95,14 +95,14 @@ function History() {
     try {
       const response = await resetMetrics();
       if (response.data && response.data.status === 'ok') {
-        setResetStatus('Données réinitialisées.');
+        setResetStatus('Data reset.');
         fetchHistoryData();
       } else {
-        setError('Impossible de réinitialiser les données.');
+        setError('Failed to reset data.');
       }
     } catch (err) {
       console.error('Reset failed:', err);
-      setError('Échec de la réinitialisation : ' + (err.response?.data?.error || err.message));
+      setError('Failed to reset data : ' + (err.response?.data?.error || err.message));
     } finally {
       setResetting(false);
     }
@@ -175,7 +175,7 @@ function History() {
           <a href="#" onClick={() => navigate('/dse')}>DSE</a>
           <a href="#" onClick={() => navigate('/history')} className="active">History</a>
           <button className="btn btn-secondary" onClick={handleResetData} disabled={resetting} style={{ marginRight: '10px' }}>
-            {resetting ? 'Réinitialisation...' : 'Réinitialiser'}
+            {resetting ? 'Resetting...' : 'Reset'}
           </button>
           <button className="logout-btn" onClick={handleLogout}>Logout</button>
         </div>

@@ -676,6 +676,14 @@ class DashboardServer:
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
+        @self.app.route('/api/start_experiment', methods=['POST'])
+        def start_experiment():
+            try:
+                response = requests.post('http://server:5000/api/start_experiment', json=request.get_json(), timeout=10)
+                return jsonify(response.json()), response.status_code
+            except Exception as e:
+                return jsonify({"error": str(e)}), 500
+
         @self.app.route('/api/xfl/set_strategy', methods=['POST'])
         def set_xfl_strategy():
             try:
