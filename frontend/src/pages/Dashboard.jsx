@@ -386,34 +386,101 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
   const realLossSeries = history.map(h => h.loss).filter(v => v != null);
   const realAccuracySeries = history.map(h => h.accuracy).filter(v => v != null);
 
+  // Convergence (heuristique plus “réaliste” que l’ancien calcul)
+  // - fenêtre de W rounds
+  // - pente via régression linéaire
+  // - stabilité via coefficient de variation (CV) des résidus/variations
+  // - nécessite une amélioration directionnelle ET une variance faible
+  // base sur chaque round (windowSize = 100% de la série disponible)
   const computeConvergence = (series, label) => {
-    if (series.length < 2) {
-      return null;
-    }
-    const recent = series.slice(-3);
-    if (recent.length < 2) {
-      return null;
-    }
+    const clean = series.filter(v => v != null && Number.isFinite(v));
+    if (clean.length < 3) return null;
 
+    const recent = clean;
+
+    // x = 0..n-1
+    const n = recent.length;
+    const xs = Array.from({ length: n }, (_, i) => i);
+
+    const meanX = (n - 1) / 2;
+    const meanY = recent.reduce((a, b) => a + b, 0) / n;
+
+    // Slope (b) = cov(x,y)/var(x)
+    let num = 0;
+    let den = 0;
+    for (let i = 0; i < n; i++) {
+      const dx = xs[i] - meanX;
+      num += dx * (recent[i] - meanY);
+      den += dx * dx;
+    }
+    const slope = den === 0 ? 0 : num / den; // unité: y / round
+
+    // CV sur les variations récentes (stabilité)
+    const diffs = [];
+    for (let i = 1; i < n; i++) diffs.push(recent[i] - recent[i - 1]);
+    const meanDiff = diffs.reduce((a, b) => a + b, 0) / Math.max(1, diffs.length);
+    const varDiff = diffs.reduce((a, b) => a + Math.pow(b - meanDiff, 2), 0) / Math.max(1, diffs.length);
+    const stdDiff = Math.sqrt(varDiff);
+
+    const denom = Math.abs(meanDiff) < 1e-9 ? 1e-9 : Math.abs(meanDiff);
+    const cv = stdDiff / denom; // plus petit => plus stable
+
+    // Seuils empiriques (à ajuster selon dataset)
+    // - pour loss: slope négative => converger
+    // - pour accuracy: slope positive => converger
+    const directionOk = (label === 'loss') ? (slope < 0) : (slope > 0);
+
+    // “amélioration” relative entre début et fin sur la fenêtre
     const start = recent[0];
     const end = recent[recent.length - 1];
-    if (start == null || end == null) {
-      return null;
-    }
+    if (start == null || end == null) return null;
 
     const safeStart = Math.abs(start) < 1e-9 ? 1e-9 : start;
-    let change;
-    let status;
 
+    // Rel amélioration (loss: end < start => positif)
+    let relChangePct;
+    // IMPORTANT: Pour les pourcentages, on veut une lecture plus “logique” (0-100)
+    // - loss: on mesure une amélioration relative de type (start-end)/start
+    // - accuracy: on mesure une amélioration relative de type (end-start)/start
+    // On retourne ensuite un score borné [0..200] (pour éviter l’effet "180%" difficilement lisible)
     if (label === 'loss') {
-      change = ((safeStart - end) / Math.abs(safeStart)) * 100;
-      status = change >= 0 ? 'Converging' : 'Diverging';
-      return `${status} ${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+      // amélioration quand la loss baisse
+      const raw = ((safeStart - end) / Math.abs(safeStart)) * 100; // peut être négatif
+      relChangePct = Math.max(-100, Math.min(100, raw));
+    } else {
+      const raw = ((end - safeStart) / Math.abs(safeStart)) * 100;
+      relChangePct = Math.max(-100, Math.min(100, raw));
     }
 
-    change = ((end - safeStart) / Math.abs(safeStart)) * 100;
-    status = change >= 0 ? 'Converging' : 'Diverging';
-    return `${status} ${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+    // Tolérance pour éviter de classifier comme “diverging” quand l’amélioration est quasi nulle
+    const minAbsImprovementPct = (label === 'loss' ? 1.0 : 0.10); // perte: 1% relatif, accuracy: 0.10 pt relatif
+    const nearPlateau = Math.abs(relChangePct) < minAbsImprovementPct;
+
+    const stabilityOk = cv < 1.0; // variance des variations relativement faible
+    const improvementOk = relChangePct >= (label === 'loss' ? 0.5 : 0.1); // seuil relatif minimal
+
+    if (nearPlateau) {
+      return `Plateau ${relChangePct >= 0 ? '+' : ''}${relChangePct.toFixed(2)}%`;
+    }
+
+    if (directionOk && stabilityOk && improvementOk) {
+      const dir = relChangePct >= 0 ? '+' : '';
+      return `Converging ${dir}${relChangePct.toFixed(2)}% (stable)`;
+    }
+
+    // Si direction est bonne mais pas stable / amélioration trop faible
+    if (directionOk && !stabilityOk) {
+      return `Unstable ${relChangePct >= 0 ? '+' : ''}${relChangePct.toFixed(2)}%`;
+    }
+
+    // Si la direction ne correspond pas
+    if (!directionOk) {
+      const dir = relChangePct >= 0 ? '+' : '';
+      return `Diverging ${dir}${relChangePct.toFixed(2)}%`;
+    }
+
+    // Cas “pas stable / pas assez d’amélioration”
+    return `Plateau ${relChangePct >= 0 ? '+' : ''}${relChangePct.toFixed(2)}%`;
   };
 
   const convergenceValue = (() => {

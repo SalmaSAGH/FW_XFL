@@ -468,6 +468,7 @@ class FLServer:
         self.round_in_progress = False
         self.client_submissions = []
         self.selected_clients = []
+        self.network_simulated_clients = None
         self.lock = threading.Lock()
         
         self.test_loader = None
@@ -666,6 +667,20 @@ class FLServer:
                 actual_clients_per_round = min(self.clients_per_round, total_clients)
                 self.selected_clients = random.sample(range(total_clients), actual_clients_per_round)
 
+            # Choose which selected clients will have network simulation applied
+            network_simulation_share = float(fl_config.get('networkSimulationShare', 1.0))
+            network_simulation_share = max(0.0, min(1.0, network_simulation_share))
+            if bool(fl_config.get('simulateConstraints', False)) and network_simulation_share > 0:
+                if network_simulation_share >= 1.0 or actual_clients_per_round <= 1:
+                    self.network_simulated_clients = list(self.selected_clients)
+                else:
+                    subset_size = max(1, int(round(actual_clients_per_round * network_simulation_share)))
+                    self.network_simulated_clients = random.sample(self.selected_clients, subset_size)
+            else:
+                self.network_simulated_clients = []
+
+            print(f"   Network simulation active for clients: {self.network_simulated_clients}")
+
             # Track the actual number of clients expected in this round
             self.current_clients_expected = actual_clients_per_round
 
@@ -682,6 +697,7 @@ class FLServer:
                 "round": self.current_round,
                 "clients_expected": actual_clients_per_round,
                 "selected_clients": self.selected_clients,
+                "network_simulated_clients": self.network_simulated_clients,
                 "xfl_strategy": xfl_info['strategy']
             }
     
@@ -940,6 +956,16 @@ class FLServer:
 
             xfl_info = self.aggregation_strategy.get_xfl_info()
             # ── CHANGED: pass session_id when storing the completed round ─────
+            additional_metrics = {
+                "submitted_clients": [sub["client_id"] for sub in self.client_submissions]
+            }
+
+            # Mark aggregation trigger source (best-effort)
+            try:
+                additional_metrics["aggregation_trigger"] = getattr(self, "_last_aggregation_trigger", "unknown")
+            except Exception:
+                additional_metrics["aggregation_trigger"] = "unknown"
+
             self.metrics_collector.store_round_metrics(
                 round_number=self.current_round,
                 num_clients=len(self.client_submissions),
@@ -949,10 +975,9 @@ class FLServer:
                 total_samples=sum(client_num_samples),
                 strategy=xfl_info['strategy'],
                 session_id=self.session_id,
-                additional_metrics={
-                    "submitted_clients": [sub["client_id"] for sub in self.client_submissions]
-                    }
-                    )
+                additional_metrics=additional_metrics
+            )
+
 
             print(f"Round {self.current_round} completed in {aggregation_time:.2f}s")
             print(f"   🌍 Global Test → Loss: {test_loss:.4f} | Acc: {test_accuracy:.2f}%" if test_accuracy is not None else "   🌍 Global Test → SKIPPED")
@@ -1246,6 +1271,7 @@ fl_config = {
     "networkBandwidth": 10,
     "networkPacketLoss": 0,
     "simulateConstraints": False,
+    "networkSimulationShare": 0.5,
     "cpuLimit": 100,
     "ramLimit": 2048,
 }
@@ -1529,6 +1555,23 @@ def get_global_model():
     dataset_name = fl_server.current_dataset_name
     model_name = fl_server.current_model_name
 
+    client_id_param = request.args.get('client_id', default=None, type=int)
+    simulated_clients = getattr(fl_server, 'network_simulated_clients', None) if fl_server is not None else None
+
+    # Default: if no subset is computed, keep old behaviour (global toggle)
+    if simulated_clients is None:
+        is_network_simulated = bool(simulate_constraints)
+    else:
+        # If subset exists, apply only to that subset.
+        # If client_id isn't provided, don't apply to any specific client.
+        is_network_simulated = (client_id_param in simulated_clients) if client_id_param is not None else False
+
+    # Effective constraints (client uses these via client response)
+    effective_simulate_constraints = simulate_constraints if is_network_simulated else False
+    effective_network_latency = network_latency if is_network_simulated else 0
+    effective_network_bandwidth = network_bandwidth if is_network_simulated else 10
+    effective_network_packet_loss = network_packet_loss if is_network_simulated else 0
+
     return jsonify({
         "weights": weights_b64,
         "round": fl_server.current_round,
@@ -1543,12 +1586,13 @@ def get_global_model():
         "batch_size": batch_size,
         "local_epochs": local_epochs,
         "learning_rate": learning_rate,
-        "network_latency_ms": network_latency,
-        "network_bandwidth_mbps": network_bandwidth,
-        "network_packet_loss_rate": network_packet_loss,
+        "network_latency_ms": effective_network_latency,
+        "network_bandwidth_mbps": effective_network_bandwidth,
+        "network_packet_loss_rate": effective_network_packet_loss,
         "cpu_limit": cpu_limit,
         "ram_limit": ram_limit,
-        "simulate_constraints": simulate_constraints
+        "simulate_constraints": effective_simulate_constraints,
+        "network_simulation_active": is_network_simulated
     })
 
 

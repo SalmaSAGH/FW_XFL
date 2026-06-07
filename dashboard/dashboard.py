@@ -293,13 +293,7 @@ class DashboardServer:
 
         @self.app.route('/api/clients')
         def get_clients_data():
-            # ── FIX: get numClients from server config instead of env var ─────
-            # This makes the Pi grid reflect whatever the user saved in Config.
             expected_clients = self._get_num_clients_from_server()
-
-            client_data_map = {}
-            last_completed_round = 0
-            active_in_last_round = set()
 
             client_data_map = {}
             last_completed_round = 0
@@ -308,61 +302,52 @@ class DashboardServer:
             try:
                 conn = psycopg2.connect(self.db_url)
                 cursor = conn.cursor()
-                # Get latest metrics per client instead of averages
+
+                # 1) Latest metrics per client (single row per client_id)
                 cursor.execute("""
                     SELECT cm.client_id,
                            cm.training_accuracy, cm.training_time_sec,
                            cm.cpu_percent, cm.memory_mb,
-                           cm.round_number, 1
+                           cm.round_number
                     FROM client_metrics cm
                     INNER JOIN (
-                        SELECT client_id, MAX(round_number) as max_round
+                        SELECT client_id, MAX(round_number) AS max_round
                         FROM client_metrics
                         GROUP BY client_id
-                    ) latest ON cm.client_id = latest.client_id AND cm.round_number = latest.max_round
+                    ) latest
+                    ON cm.client_id = latest.client_id AND cm.round_number = latest.max_round
                     ORDER BY cm.client_id
                 """)
+                # row: [client_id, training_accuracy, training_time_sec, cpu_percent, memory_mb, round_number]
                 client_data_map = {row[0]: row for row in cursor.fetchall()}
 
+                # 2) Determine the latest completed round and which clients submitted then
                 cursor.execute("""
-                               SELECT rm.round_number, rm.metrics_json
-                               FROM round_metrics rm
-                               INNER JOIN server_sessions ss ON ss.session_id = rm.session_id
-                               WHERE rm.global_test_accuracy IS NOT NULL
-                               ORDER BY ss.started_at DESC, rm.round_number DESC
-                               LIMIT 1
-                               """)
+                    SELECT rm.round_number, rm.metrics_json
+                    FROM round_metrics rm
+                    INNER JOIN server_sessions ss ON ss.session_id = rm.session_id
+                    WHERE rm.global_test_accuracy IS NOT NULL
+                    ORDER BY ss.started_at DESC, rm.round_number DESC
+                    LIMIT 1
+                """)
                 row = cursor.fetchone()
                 if row:
                     last_completed_round = row[0]
                     metrics_json = row[1]
-                    if metrics_json and 'submitted_clients' in metrics_json:
-                        active_in_last_round = set(metrics_json['submitted_clients'])
+                    if metrics_json and isinstance(metrics_json, dict) and 'submitted_clients' in metrics_json:
+                        active_in_last_round = set(metrics_json.get('submitted_clients', []))
                     else:
-                        cursor.execute("""
-                                       SELECT DISTINCT client_id FROM client_metrics
-                                       WHERE round_number = %s
-                                       """, (last_completed_round,))
+                        cursor.execute(
+                            """SELECT DISTINCT client_id FROM client_metrics WHERE round_number = %s""",
+                            (last_completed_round,)
+                        )
                         active_in_last_round = set(r[0] for r in cursor.fetchall())
-                else:
-                    last_completed_round = 0
-                    row = cursor.fetchone()
-                    print(f"[DEBUG] last_completed_round={last_completed_round}, metrics_json={row[0] if row else None}")
-                    if row and row[0] and 'submitted_clients' in row[0]:
-                        active_in_last_round = set(row[0]['submitted_clients'])
-                    
-                    else:
-                        cursor.execute("""
-                                       SELECT DISTINCT client_id FROM client_metrics
-                                       WHERE round_number = %s
-                                       """, (last_completed_round,))
-                        active_in_last_round = set(r[0] for r in cursor.fetchall())
-                        print(f"[DEBUG] active_in_last_round from client_metrics: {active_in_last_round}")
+
                 conn.close()
             except Exception as e:
                 print(f"⚠️ Database error in /api/clients: {e}")
 
-            current_round = last_completed_round
+            # 3) Current round status from FL server
             round_in_progress = False
             submitted_clients = set()
             selected_clients = set()
@@ -371,44 +356,50 @@ class DashboardServer:
                 server_status = requests.get('http://server:5000/api/status', timeout=10).json()
                 round_in_progress = server_status.get('round_in_progress', False)
                 if round_in_progress:
-                    current_round = server_status.get('current_round', last_completed_round)
                     submitted_clients = set(server_status.get('submitted_clients', []))
                     selected_clients = set(server_status.get('selected_clients', []))
             except Exception as e:
                 print(f"⚠️ Server status error: {e}")
 
+            # 4) Build response for Pi ids [0..expected_clients-1]
             clients = []
-            for client_id in range(1, expected_clients + 1):
+            # React affiche des cartes pour Pi 0..N-1 (indice i dans Array.from length NUM_DEVICES)
+            for client_id in range(0, expected_clients):
                 if round_in_progress:
                     if client_id in submitted_clients:
-                        state = "active"
+                        state = "active"       # déjà soumis
                     elif client_id in selected_clients:
-                        state = "training"
+                        state = "training"     # sélectionné mais pas encore soumis
                     else:
                         state = "idle"
                 else:
                     state = "active" if client_id in active_in_last_round else "idle"
 
+
                 if client_id in client_data_map:
                     row = client_data_map[client_id]
                     clients.append({
                         "client_id": client_id,
-                        "avg_accuracy": round(row[1], 2) if row[1] else 0,
-                        "avg_time": round(row[2], 2) if row[2] else 0,
-                        "avg_cpu": round(row[3], 2) if row[3] else 0,
-                        "avg_memory": round(row[4], 2) if row[4] else 0,
-                        "num_rounds": row[6],
+                        "avg_accuracy": round(row[1], 2) if row[1] is not None else 0,
+                        "avg_time": round(row[2], 2) if row[2] is not None else 0,
+                        "avg_cpu": round(row[3], 2) if row[3] is not None else 0,
+                        "avg_memory": round(row[4], 2) if row[4] is not None else 0,
+                        "num_rounds": 1,
                         "state": state
                     })
                 else:
                     clients.append({
                         "client_id": client_id,
-                        "avg_accuracy": 0, "avg_time": 0,
-                        "avg_cpu": 0, "avg_memory": 0,
-                        "num_rounds": 0, "state": state
+                        "avg_accuracy": 0,
+                        "avg_time": 0,
+                        "avg_cpu": 0,
+                        "avg_memory": 0,
+                        "num_rounds": 0,
+                        "state": state
                     })
 
             return jsonify({"clients": clients})
+
 
         @self.app.route('/api/bandwidth')
         def get_bandwidth_data():

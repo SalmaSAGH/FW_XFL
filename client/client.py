@@ -265,12 +265,14 @@ class FLClient:
             
             # Step 1: Get global model
             response = requests.get(
-                f"{self.server_url}/api/get_global_model", timeout=10
+                f"{self.server_url}/api/get_global_model?client_id={self.client_id}", timeout=10
             )
             if response.status_code != 200:
+
                 print(f"Client {self.client_id}: ❌ get_global_model "
                       f"returned {response.status_code}")
                 return False
+
 
             data = response.json()
             download_delay = self._simulate_network_delay(len(response.content), 'download')
