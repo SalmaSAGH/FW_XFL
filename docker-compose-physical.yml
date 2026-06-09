@@ -66,6 +66,7 @@ services:
       - ./server:/app/server
       - ./client:/app/client
       - ./config:/app/config
+      - ./db_config.py:/app/db_config.py
     environment:
       - PYTHONUNBUFFERED=1
       - NUM_CLIENTS=1
@@ -92,6 +93,7 @@ services:
     volumes:
       - ./logs:/app/logs
       - ./dashboard:/app/dashboard
+      - ./db_config.py:/app/db_config.py
     environment:
       - PYTHONUNBUFFERED=1
       - NUM_CLIENTS=1

@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dashboard.dashboard import run_dashboard
 from config.config_parser import load_config
+from db_config import DB_URL
 
 
 def main():
@@ -23,8 +24,8 @@ def main():
     print("Starting dashboard on 0.0.0.0:5001")
     print("="*70 + "\n")
 
-    # Use DATABASE_URL from environment, fallback to default
-    db_url = os.getenv('DATABASE_URL') or os.getenv('DB_URL', 'postgresql://postgres:newpassword@postgres:5432/xfl_metrics')
+    # Use DB_URL from centralized config
+    db_url = DB_URL
     print(f"Using DATABASE_URL: {db_url}")
     run_dashboard(db_url=db_url, port=5001)
 

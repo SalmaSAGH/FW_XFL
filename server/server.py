@@ -12,6 +12,7 @@ import json
 import hashlib
 import secrets
 import os
+from db_config import DB_URL
 import uuid                          # ← NEW: for session_id generation
 import socket                        # ← NEW: for hostname in server_sessions
 import psycopg2
@@ -34,8 +35,7 @@ from client.dataset import load_dataset  # ← TEST DATA LOADER
 import gc
 
 
-# Database URL for dashboard APIs
-DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:newpassword@localhost:5432/xfl_metrics')
+# Database URL is centralized in db_config.py
 
 # ── NEW: Generate a unique session_id once per process lifetime ───────────────
 # This UUID is created when the server starts (docker-compose up) and never
@@ -442,7 +442,7 @@ class FLServer:
         aggregation_strategy: str = "fedavg",
         num_rounds: int = 10,
         clients_per_round: int = 5,
-        db_url: str = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics",
+        db_url: str = DB_URL,
         xfl_strategy: str = "all_layers",
         xfl_param: int = 3
     ):
@@ -2352,7 +2352,7 @@ def create_server(
     aggregation_strategy: str = "fedavg",
     num_rounds: int = 10,
     clients_per_round: int = 5,
-    db_url: str = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics",
+    db_url: str = DB_URL,
     xfl_strategy: str = "all_layers",
     xfl_param: int = 3
 ) -> FLServer:

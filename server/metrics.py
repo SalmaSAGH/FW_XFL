@@ -12,6 +12,7 @@ import time
 import threading
 import signal
 import sys
+from db_config import DB_URL
 
 
 # Maximum retries for database operations
@@ -25,7 +26,7 @@ class ServerMetricsCollector:
     Uses connection pooling for better performance and resource management
     """
     
-    def __init__(self, db_url: str = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics"):
+    def __init__(self, db_url: str = DB_URL):
         """
         Args:
             db_url: PostgreSQL database URL
@@ -703,7 +704,7 @@ class ServerMetricsCollector:
 
 if __name__ == "__main__":
     print("🧪 Testing ServerMetricsCollector...\n")
-    collector = ServerMetricsCollector(db_url="postgresql://postgres:newpassword@localhost:5432/xfl_metrics")
+    collector = ServerMetricsCollector(db_url=DB_URL)
     collector.clear_database()
     print("\n📊 Storing round metrics...")
     collector.store_round_metrics(round_number=1, num_clients=5, aggregation_time=2.5,

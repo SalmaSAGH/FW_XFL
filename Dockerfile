@@ -24,7 +24,7 @@ COPY server/ ./server/
 COPY dashboard/ ./dashboard/
 COPY client/ ./client/
 COPY config/ ./config/
-
+COPY db_config.py ./
 
 # Create data and logs directories
 RUN mkdir -p /app/data /app/logs /app/results

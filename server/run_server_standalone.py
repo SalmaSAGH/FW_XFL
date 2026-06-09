@@ -35,6 +35,7 @@ except Exception as e1:
 import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from server.server import app, fl_config
+from db_config import DB_URL
 
 import flask
 import threading
@@ -135,17 +136,16 @@ def reload_server_model_and_data(dataset_name: str, distribution: str = 'iid',
 
 def main():
     # Determine database URL and extract host for PostgreSQL connection check
-    db_url = (os.getenv('DB_URL') or
-              os.getenv('DATABASE_URL',
-                        'postgresql://postgres:newpassword@localhost:5432/xfl_metrics'))
+    db_url = DB_URL
 
     # Extract host from database URL for PostgreSQL connection check
     from urllib.parse import urlparse
     parsed_url = urlparse(db_url)
     postgres_host = parsed_url.hostname or 'localhost'
 
-    print(f"⏳ Waiting for PostgreSQL at {postgres_host}:5432...")
-    if not wait_for_postgres(host=postgres_host):
+    postgres_port = parsed_url.port or 5432
+    print(f"⏳ Waiting for PostgreSQL at {postgres_host}:{postgres_port}...")
+    if not wait_for_postgres(host=postgres_host, port=postgres_port):
         print("❌ Cannot connect to PostgreSQL, exiting...")
         sys.exit(1)
 

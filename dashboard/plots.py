@@ -9,6 +9,7 @@ import pandas as pd
 from pathlib import Path
 import numpy as np
 from typing import List, Dict, Any
+from db_config import DB_URL
 
 
 # Set style
@@ -22,7 +23,7 @@ class ResultsVisualizer:
     Visualize FL experiment results from database
     """
 
-    def __init__(self, db_url: str = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics", output_dir: str = "results"):
+    def __init__(self, db_url: str = DB_URL, output_dir: str = "results"):
         """
         Args:
             db_url: PostgreSQL database URL
@@ -490,8 +491,8 @@ if __name__ == "__main__":
         db_url = config.server.metrics_db_url
     except Exception as e:
         print(f"⚠️  Could not load config: {e}")
-        print("   Using default PostgreSQL URL...")
-        db_url = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics"
+        print("   Using DB_URL from centralized config...")
+        db_url = DB_URL
 
     try:
         visualizer = ResultsVisualizer(

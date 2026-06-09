@@ -16,6 +16,7 @@ import requests
 
 # Add parent directory to path for config import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from db_config import DB_URL
 from config.config_parser import load_config
 
 
@@ -24,7 +25,7 @@ class DashboardServer:
     Real-time dashboard server for FL monitoring with XFL
     """
 
-    def __init__(self, db_url: str = "postgresql://postgres:newpassword@postgres:5432/xfl_metrics", port: int = 5001):
+    def __init__(self, db_url: str = DB_URL, port: int = 5001):
         self.db_url = db_url
         self.port = port
         self.app = Flask(__name__,
@@ -775,7 +776,7 @@ class DashboardServer:
         self.app.run(host='0.0.0.0', port=self.port, debug=debug, threaded=True)
 
 
-def run_dashboard(db_url: str = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics", port: int = 5001):
+def run_dashboard(db_url: str = DB_URL, port: int = 5001):
     DashboardServer(db_url=db_url, port=port).run(debug=False)
 
 
@@ -788,6 +789,6 @@ if __name__ == "__main__":
         db_url = config.server.metrics_db_url
     except Exception as e:
         print(f"⚠️  Could not load config: {e}")
-        db_url = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics"
+        db_url = DB_URL
     run_dashboard(db_url=db_url, port=5001)
 
