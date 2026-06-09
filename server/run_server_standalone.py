@@ -6,12 +6,9 @@ import sys
 import os
 import time
 import psycopg2
+from urllib.parse import urlparse, parse_qs, unquote
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from server import create_server
-from client import create_model, create_dataloaders
-from client.model import DATASET_CONFIG  # ← source unique de vérité pour dataset→model
 
 # NEW: Config parsing for dynamic dataset init
 try:
@@ -32,9 +29,8 @@ except Exception as e1:
         initial_dist = 'iid'
         print(f"✅ Using defaults: dataset={initial_dataset}, dist={initial_dist} (errors: {e1}, {e2})")
 
-import sys
+# Ensure the local package root is resolvable for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from server.server import app, fl_config
 from db_config import DB_URL
 
 import flask
@@ -42,20 +38,40 @@ import threading
 
 
 
-def wait_for_postgres(host="postgres", port=5432, user="postgres",
-                      password="newpassword", db="xfl_metrics", timeout=60):
-    """Wait for PostgreSQL to be ready"""
+def parse_database_url(db_url: str) -> dict:
+    parsed = urlparse(db_url)
+    if parsed.scheme not in ('postgres', 'postgresql'):
+        raise ValueError(f"Unsupported database scheme: {parsed.scheme}")
+
+    query = parse_qs(parsed.query)
+    sslmode = query.get('sslmode', [None])[0]
+    if sslmode is None and parsed.hostname and parsed.hostname.endswith('.railway.internal'):
+        sslmode = 'require'
+
+    return {
+        'host': parsed.hostname or 'localhost',
+        'port': parsed.port or 5432,
+        'user': unquote(parsed.username) if parsed.username else 'postgres',
+        'password': unquote(parsed.password) if parsed.password else 'newpassword',
+        'dbname': parsed.path.lstrip('/') or 'postgres',
+        'sslmode': sslmode,
+    }
+
+
+def wait_for_postgres(connect_args: dict, timeout=60):
+    """Wait for PostgreSQL to be ready using the parsed DATABASE_URL."""
+    host = connect_args.get('host', 'localhost')
+    port = connect_args.get('port', 5432)
     print(f"⏳ Waiting for PostgreSQL at {host}:{port}...")
     start_time = time.time()
     while time.time() - start_time < timeout:
         try:
-            conn = psycopg2.connect(host=host, port=port, user=user,
-                                    password=password, dbname=db)
+            conn = psycopg2.connect(**connect_args, connect_timeout=5)
             conn.close()
             print("✅ PostgreSQL is ready!")
             return True
-        except psycopg2.OperationalError:
-            print("   PostgreSQL not ready, waiting...")
+        except psycopg2.OperationalError as e:
+            print(f"   PostgreSQL not ready, waiting... ({e})")
             time.sleep(2)
     print("❌ Timeout waiting for PostgreSQL")
     return False
@@ -135,19 +151,17 @@ def reload_server_model_and_data(dataset_name: str, distribution: str = 'iid',
 
 
 def main():
-    # Determine database URL and extract host for PostgreSQL connection check
+    # Determine database URL and extract parameters for PostgreSQL connection check
     db_url = DB_URL
+    connect_args = parse_database_url(db_url)
 
-    # Extract host from database URL for PostgreSQL connection check
-    from urllib.parse import urlparse
-    parsed_url = urlparse(db_url)
-    postgres_host = parsed_url.hostname or 'localhost'
-
-    postgres_port = parsed_url.port or 5432
-    print(f"⏳ Waiting for PostgreSQL at {postgres_host}:{postgres_port}...")
-    if not wait_for_postgres(host=postgres_host, port=postgres_port):
+    if not wait_for_postgres(connect_args):
         print("❌ Cannot connect to PostgreSQL, exiting...")
         sys.exit(1)
+
+    # Import server definitions only after the database is reachable
+    from server import create_server
+    from server.server import app, fl_config
 
     num_clients = int(os.getenv('NUM_CLIENTS', '5'))
 
