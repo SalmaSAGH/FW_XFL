@@ -277,9 +277,10 @@ class ServerMetricsCollector:
         # relying on round-number gap detection.
         cursor.execute("ALTER TABLE round_metrics ADD COLUMN IF NOT EXISTS session_id VARCHAR(36)")
 
-        # ── NEW: Table that registers each server startup ─────────────────────
-        # One row is inserted at docker-compose up; the session_id is reused
-        # for every round until docker-compose down.
+        # ── NOTE: server_sessions table is now created in server.py:init_server_sessions_database() ──
+        # It was previously created here, but is now centralized in server startup
+        # to ensure proper initialization order (before _register_server_session())
+        # The CREATE TABLE IF NOT EXISTS below is kept as a safety net for migrations.
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS server_sessions (
                 session_id   VARCHAR(36)  PRIMARY KEY,

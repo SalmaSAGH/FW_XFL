@@ -229,8 +229,7 @@ def main():
 
     from werkzeug.serving import WSGIRequestHandler
     WSGIRequestHandler.protocol_version = "HTTP/1.1"
-    port = int(os.getenv("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False, threaded=True,
+    app.run(host="0.0.0.0", port=5000, debug=False, threaded=True,
             processes=1, use_reloader=False)
 
 

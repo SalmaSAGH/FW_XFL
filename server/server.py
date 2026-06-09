@@ -12,7 +12,6 @@ import json
 import hashlib
 import secrets
 import os
-from db_config import DB_URL
 import uuid                          # ← NEW: for session_id generation
 import socket                        # ← NEW: for hostname in server_sessions
 import psycopg2
@@ -35,7 +34,8 @@ from client.dataset import load_dataset  # ← TEST DATA LOADER
 import gc
 
 
-# Database URL is centralized in db_config.py
+# Database URL for dashboard APIs
+DB_URL = os.getenv('DATABASE_URL', 'postgresql://postgres:newpassword@localhost:5432/xfl_metrics')
 
 # ── NEW: Generate a unique session_id once per process lifetime ───────────────
 # This UUID is created when the server starts (docker-compose up) and never
@@ -143,6 +143,26 @@ def _return_connection(conn):
             conn.close()
         except:
             pass
+
+
+def init_server_sessions_database():
+    """Initialize server_sessions table in the database"""
+    try:
+        conn = psycopg2.connect(DB_URL)
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS server_sessions (
+                session_id   VARCHAR(36)  PRIMARY KEY,
+                started_at   REAL         NOT NULL,
+                hostname     VARCHAR(255),
+                notes        TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+        print("Server sessions table initialized")
+    except Exception as e:
+        print(f"WARNING: Warning: Could not initialize server sessions table: {e}")
 
 
 # ── NEW: Register the current session in the database ────────────────────────
@@ -442,7 +462,7 @@ class FLServer:
         aggregation_strategy: str = "fedavg",
         num_rounds: int = 10,
         clients_per_round: int = 5,
-        db_url: str = DB_URL,
+        db_url: str = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics",
         xfl_strategy: str = "all_layers",
         xfl_param: int = 3
     ):
@@ -1281,6 +1301,7 @@ try:
     init_user_database()
     init_fl_config_database()
     init_server_state_database()
+    init_server_sessions_database()
     # ── NEW: register this docker-compose up as a new session ────────────────
     _register_server_session()
 except Exception as e:
@@ -2352,7 +2373,7 @@ def create_server(
     aggregation_strategy: str = "fedavg",
     num_rounds: int = 10,
     clients_per_round: int = 5,
-    db_url: str = DB_URL,
+    db_url: str = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics",
     xfl_strategy: str = "all_layers",
     xfl_param: int = 3
 ) -> FLServer:
