@@ -22,6 +22,7 @@ RUN pip install --no-cache-dir -r requirements_server.txt
 # Copy server code
 COPY server/ ./server/
 COPY dashboard/ ./dashboard/
+COPY client/ ./client/
 COPY config/ ./config/
 
 

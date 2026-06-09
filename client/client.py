@@ -671,28 +671,38 @@ class FLClient:
                               verbose: bool = False) -> OrderedDict:
         all_layer_names = list(trained_weights.keys())
         
-        # FIXED: xfl_sparsification sends FIRST 2 conv blocks only (8 params: conv1/2 + bias)
+        # XFL sparsification: compatible avec l'article => 1 "seule couche" par round
+        # Ici, on applique sparsification uniquement sur le bloc sélectionné par le schéma cyclic,
+        # au lieu d'envoyer un bloc fixe (conv1+conv2).
         if xfl_strategy == "xfl_sparsification":
-            # Target layers: conv1.weight, conv1.bias, conv2.weight, conv2.bias (4 params ×2 = 8)
-            target_layers = ['conv1.weight', 'conv1.bias', 'conv2.weight', 'conv2.bias']
+            layer_prefixes = sorted(set(name.split('.')[0] for name in all_layer_names))
+            num_layers = len(layer_prefixes)
+            layer_index = (self.client_id + current_round - 1) % num_layers
+            selected_prefix = layer_prefixes[layer_index]
+
             selected_weights = OrderedDict(
-                (name, trained_weights[name]) for name in target_layers if name in trained_weights
+                (param_name, trained_weights[param_name])
+                for param_name in all_layer_names
+                if param_name.startswith(selected_prefix)
             )
-            
-            # NEW: Log sent shapes
-            print(f"Client {self.client_id}: 📤 Sending XFL conv1/2:")
-            for name in ['conv1.weight', 'conv1.bias', 'conv2.weight', 'conv2.bias']:
-                if name in selected_weights:
-                    print(f"  {name}: {selected_weights[name].shape}")
-            
-            # Apply sparsification
+
+            if verbose:
+                print(
+                    f"   📌 XFL-Sparsification: layer {layer_index} ({selected_prefix}) — "
+                    f"{len(selected_weights)} params before sparsification"
+                )
+
             selected_weights = self._apply_sparsification(
                 selected_weights, self.sparsification_threshold
             )
-            
+
             if verbose:
-                print(f"   📌 XFL-Sparsification: conv1/conv2 only ({len(selected_weights)}/8 params)")
+                print(
+                    f"   📌 XFL-Sparsification: after sparsification ({len(selected_weights)}/params sent)"
+                )
+
             return selected_weights
+
 
 
         if xfl_strategy == "all_layers":
