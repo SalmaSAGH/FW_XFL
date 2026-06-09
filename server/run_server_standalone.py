@@ -32,6 +32,8 @@ except Exception as e1:
 # Ensure the local package root is resolvable for imports
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from db_config import DB_URL
+from client import create_model, create_dataloaders
+from client.model import DATASET_CONFIG
 
 import flask
 import threading
