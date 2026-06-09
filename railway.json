@@ -4,7 +4,6 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "python -m server.run_server_standalone",
-    "healthcheckPath": "/api/status"
+    "startCommand": "python -m server.run_server_standalone"
   }
 }
