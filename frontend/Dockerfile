@@ -1,5 +1,5 @@
 # Build stage
-FROM node:18-alpine as build
+FROM node:18-alpine AS build
 
 WORKDIR /app
 
@@ -8,6 +8,9 @@ COPY package*.json ./
 
 # Install dependencies
 RUN npm ci
+
+# Ensure npm binaries are executable inside Linux containers
+RUN chmod +x ./node_modules/.bin/*
 
 # Copy source code
 COPY . .
