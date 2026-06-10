@@ -14,12 +14,13 @@ RUN npm ci --include=dev
 
 # Ensure npm binaries are executable inside Linux containers
 RUN chmod +x ./node_modules/.bin/*
+RUN chmod +x ./node_modules/vite/bin/vite.js
 
 # Copy source code
 COPY . .
 
-# Build the React app
-RUN npm run build
+# Build the React app using Node directly to avoid shell permission issues
+RUN node ./node_modules/vite/bin/vite.js build
 
 # Production stage with nginx
 FROM nginx:alpine
