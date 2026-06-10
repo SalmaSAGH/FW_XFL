@@ -3,11 +3,14 @@ FROM node:18-alpine AS build
 
 WORKDIR /app
 
+# Ensure devDependencies are installed during build, even if NODE_ENV=production
+ENV NODE_ENV=development
+
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm ci
+# Install dependencies including devDependencies required for Vite
+RUN npm ci --include=dev
 
 # Ensure npm binaries are executable inside Linux containers
 RUN chmod +x ./node_modules/.bin/*
