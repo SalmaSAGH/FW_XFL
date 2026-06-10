@@ -12,8 +12,9 @@ export default defineConfig({
       '/api': {
         // In Docker: proxy to dashboard (which proxies to server)
         // For local dev: use dashboard at 5001
-        target: 'http://localhost:5001',
-        changeOrigin: true
+        target: process.env.VITE_API_URL || 'http://localhost:5001',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/api/, '')
       }
     }
   }

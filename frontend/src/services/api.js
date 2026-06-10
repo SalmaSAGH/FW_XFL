@@ -1,6 +1,16 @@
 import axios from 'axios';
 
-const API_BASE_URL = '/api';
+// Build API base URL from environment variable (set by Vercel or local proxy)
+const getApiBaseUrl = () => {
+  // In production (Vercel), use the full URL
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  // In development, use the proxy path
+  return '/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // Create axios instance
 const api = axios.create({
