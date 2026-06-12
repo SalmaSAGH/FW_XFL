@@ -12,7 +12,6 @@ import time
 import threading
 import signal
 import sys
-from db_config import DB_URL
 
 
 # Maximum retries for database operations
@@ -26,7 +25,7 @@ class ServerMetricsCollector:
     Uses connection pooling for better performance and resource management
     """
     
-    def __init__(self, db_url: str = DB_URL):
+    def __init__(self, db_url: str = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics"):
         """
         Args:
             db_url: PostgreSQL database URL
@@ -270,17 +269,17 @@ class ServerMetricsCollector:
         # Add strategy column if it doesn't exist (for migration)
         cursor.execute("ALTER TABLE round_metrics ADD COLUMN IF NOT EXISTS strategy VARCHAR(255)")
 
-        # ── NEW: Add session_id column (migration-safe) ──────────────────────
+        # ── NEW: Add session_id and round duration columns (migration-safe) ──
         # session_id is a UUID generated once per docker-compose up.
         # Every round started in that container lifetime shares the same session_id.
         # This lets the History page group rounds into true "sessions" without
         # relying on round-number gap detection.
         cursor.execute("ALTER TABLE round_metrics ADD COLUMN IF NOT EXISTS session_id VARCHAR(36)")
+        cursor.execute("ALTER TABLE round_metrics ADD COLUMN IF NOT EXISTS round_duration_sec REAL")
 
-        # ── NOTE: server_sessions table is now created in server.py:init_server_sessions_database() ──
-        # It was previously created here, but is now centralized in server startup
-        # to ensure proper initialization order (before _register_server_session())
-        # The CREATE TABLE IF NOT EXISTS below is kept as a safety net for migrations.
+        # ── NEW: Table that registers each server startup ─────────────────────
+        # One row is inserted at docker-compose up; the session_id is reused
+        # for every round until docker-compose down.
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS server_sessions (
                 session_id   VARCHAR(36)  PRIMARY KEY,
@@ -335,6 +334,7 @@ class ServerMetricsCollector:
         round_number: int,
         num_clients: int,
         aggregation_time: float,
+        round_duration: float = None,
         global_test_loss: float = None,
         global_test_accuracy: float = None,
         total_samples: int = None,
@@ -353,11 +353,12 @@ class ServerMetricsCollector:
             cursor.execute("""
                 UPDATE round_metrics
                 SET timestamp = %s, num_clients = %s, aggregation_time_sec = %s,
-                    global_test_loss = %s, global_test_accuracy = %s, total_samples = %s,
+                    round_duration_sec = %s, global_test_loss = %s,
+                    global_test_accuracy = %s, total_samples = %s,
                     strategy = %s, metrics_json = %s, session_id = %s
                 WHERE round_number = %s AND session_id = %s
             """, (
-                time.time(), num_clients, aggregation_time,
+                time.time(), num_clients, aggregation_time, round_duration,
                 global_test_loss, global_test_accuracy, total_samples,
                 strategy,
                 psycopg2.extras.Json(additional_metrics) if additional_metrics else None,
@@ -368,12 +369,12 @@ class ServerMetricsCollector:
                 cursor.execute("""
                     INSERT INTO round_metrics (
                         round_number, timestamp, num_clients, aggregation_time_sec,
-                        global_test_loss, global_test_accuracy, total_samples,
-                        strategy, metrics_json, session_id
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        round_duration_sec, global_test_loss, global_test_accuracy,
+                        total_samples, strategy, metrics_json, session_id
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
                     round_number, time.time(), num_clients, aggregation_time,
-                    global_test_loss, global_test_accuracy, total_samples,
+                    round_duration, global_test_loss, global_test_accuracy, total_samples,
                     strategy,
                     psycopg2.extras.Json(additional_metrics) if additional_metrics else None,
                     session_id
@@ -705,7 +706,7 @@ class ServerMetricsCollector:
 
 if __name__ == "__main__":
     print("🧪 Testing ServerMetricsCollector...\n")
-    collector = ServerMetricsCollector(db_url=DB_URL)
+    collector = ServerMetricsCollector(db_url="postgresql://postgres:newpassword@localhost:5432/xfl_metrics")
     collector.clear_database()
     print("\n📊 Storing round metrics...")
     collector.store_round_metrics(round_number=1, num_clients=5, aggregation_time=2.5,

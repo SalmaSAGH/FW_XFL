@@ -188,7 +188,7 @@ class PhysicalClientManager:
                 for c in self.clients.values()
             ]
     
-    def get_active_clients(self, timeout_seconds: int = 60) -> List[int]:
+    def get_active_clients(self, timeout_seconds: int = 300) -> List[int]:
         """Get list of active client IDs"""
         cutoff = time.time() - timeout_seconds
         with self._lock:

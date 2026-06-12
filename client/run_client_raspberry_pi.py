@@ -6,6 +6,7 @@ Collects real metrics from Raspberry Pi hardware
 import sys
 import os
 import time
+import threading
 import requests
 import argparse
 import torch
@@ -290,22 +291,30 @@ def main():
     # Make ip_address available for re-registration
     client_ip_address = ip_address
     
-    last_heartbeat = 0
-    heartbeat_interval = 20
+    round_in_progress = False
+    selected_clients = []
+    heartbeat_interval = 15
+    heartbeat_running = True
 
-    def send_heartbeat():
-        try:
-            requests.post(
-                f"{server_url}/api/physical/heartbeat",
-                json={
+    def heartbeat_loop():
+        while heartbeat_running:
+            try:
+                heartbeat_payload = {
                     "client_id": args.client_id,
-                    "status": "training" if round_in_progress else "connected",
+                    "status": "training" if round_in_progress and args.client_id in selected_clients else "connected",
                     "round_number": round_num
-                },
-                timeout=5
-            )
-        except Exception:
-            pass
+                }
+                requests.post(
+                    f"{server_url}/api/physical/heartbeat",
+                    json=heartbeat_payload,
+                    timeout=5
+                )
+            except Exception:
+                pass
+            time.sleep(heartbeat_interval)
+
+    heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
+    heartbeat_thread.start()
 
     while True:
         try:
@@ -351,21 +360,9 @@ def main():
                 selected_clients = status.get('selected_clients', [])
                 current_round = status.get('current_round', 0)
                 
-                if current_time - last_heartbeat >= heartbeat_interval:
-                    heartbeat_payload = {
-                        "client_id": args.client_id,
-                        "status": "training" if round_in_progress and args.client_id in selected_clients else "connected",
-                        "round_number": current_round
-                    }
-                    try:
-                        requests.post(
-                            f"{server_url}/api/physical/heartbeat",
-                            json=heartbeat_payload,
-                            timeout=5
-                        )
-                    except Exception:
-                        pass
-                    last_heartbeat = current_time
+                round_in_progress = status.get('round_in_progress', False)
+                selected_clients = status.get('selected_clients', [])
+                current_round = status.get('current_round', 0)
 
                 if round_in_progress and args.client_id in selected_clients and current_round > last_round:
                     last_round = current_round
@@ -404,6 +401,7 @@ def main():
             time.sleep(5)
     
     # Cleanup
+    heartbeat_running = False
     if metrics_collector:
         metrics_collector.stop_collection()
         print("\n📊 Final Metrics Summary:")

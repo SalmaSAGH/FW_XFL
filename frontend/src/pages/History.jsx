@@ -526,7 +526,7 @@ function History() {
                             <th>Round</th>
                             <th>Accuracy</th>
                             <th>Loss</th>
-                            <th>Agg Time (s)</th>
+                            <th>Round Time (s)</th>
                             <th>Clients</th>
                           </tr>
                         </thead>
@@ -550,8 +550,8 @@ function History() {
                                   ) : '-'}
                                 </td>
                                 <td>
-                                  {round.agg_time !== null ? (
-                                    <span style={{ color: '#ffa726' }}>{round.agg_time}s</span>
+                                  {(round.round_duration ?? round.round_time ?? round.agg_time) !== null ? (
+                                    <span style={{ color: '#ffa726' }}>{(round.round_duration ?? round.round_time ?? round.agg_time)}s</span>
                                   ) : '-'}
                                 </td>
                                 <td>{round.clients || '-'}</td>

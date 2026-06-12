@@ -252,8 +252,8 @@ const [status, setStatus] = useState({});
         setNetworkMetrics(networkRes.data);
       }
       
-      // History data - check for non-empty rounds array
-      if (historyRes && historyRes.data && historyRes.data.rounds && historyRes.data.rounds.length > 0) {
+      // History data - update history even when there are zero rounds
+      if (historyRes && historyRes.data && Array.isArray(historyRes.data.rounds)) {
         setHistory(historyRes.data.rounds);
       }
     } catch (error) {
@@ -379,121 +379,57 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
     jitter: networkMetrics.jitter[idx]
   }));
 
-  const effectiveAccuracySeries = (accuracyData.accuracy && accuracyData.accuracy.length > 0)
-    ? accuracyData.accuracy.filter(v => v != null)
-    : history.map(h => h.accuracy).filter(v => v != null);
+  const orderedHistory = [...history].sort((a, b) => a.round - b.round);
+  const realLossSeries = orderedHistory.map(h => h.loss).filter(v => v != null && Number.isFinite(v));
+  const realAccuracySeries = orderedHistory.map(h => h.accuracy).filter(v => v != null && Number.isFinite(v));
 
-  const realLossSeries = history.map(h => h.loss).filter(v => v != null);
-  const realAccuracySeries = history.map(h => h.accuracy).filter(v => v != null);
-
-  // Convergence (heuristique plus “réaliste” que l’ancien calcul)
-  // - fenêtre de W rounds
-  // - pente via régression linéaire
-  // - stabilité via coefficient de variation (CV) des résidus/variations
-  // - nécessite une amélioration directionnelle ET une variance faible
-  // base sur chaque round (windowSize = 100% de la série disponible)
   const computeConvergence = (series, label) => {
     const clean = series.filter(v => v != null && Number.isFinite(v));
-    if (clean.length < 3) return null;
+    if (clean.length < 2) return null;
 
-    const recent = clean;
-
-    // x = 0..n-1
+    const windowSize = Math.min(8, clean.length);
+    const recent = clean.slice(-windowSize);
     const n = recent.length;
-    const xs = Array.from({ length: n }, (_, i) => i);
 
-    const meanX = (n - 1) / 2;
-    const meanY = recent.reduce((a, b) => a + b, 0) / n;
-
-    // Slope (b) = cov(x,y)/var(x)
-    let num = 0;
-    let den = 0;
-    for (let i = 0; i < n; i++) {
-      const dx = xs[i] - meanX;
-      num += dx * (recent[i] - meanY);
-      den += dx * dx;
-    }
-    const slope = den === 0 ? 0 : num / den; // unité: y / round
-
-    // CV sur les variations récentes (stabilité)
     const diffs = [];
-    for (let i = 1; i < n; i++) diffs.push(recent[i] - recent[i - 1]);
-    const meanDiff = diffs.reduce((a, b) => a + b, 0) / Math.max(1, diffs.length);
-    const varDiff = diffs.reduce((a, b) => a + Math.pow(b - meanDiff, 2), 0) / Math.max(1, diffs.length);
-    const stdDiff = Math.sqrt(varDiff);
-
-    const denom = Math.abs(meanDiff) < 1e-9 ? 1e-9 : Math.abs(meanDiff);
-    const cv = stdDiff / denom; // plus petit => plus stable
-
-    // Seuils empiriques (à ajuster selon dataset)
-    // - pour loss: slope négative => converger
-    // - pour accuracy: slope positive => converger
-    const directionOk = (label === 'loss') ? (slope < 0) : (slope > 0);
-
-    // “amélioration” relative entre début et fin sur la fenêtre
-    const start = recent[0];
-    const end = recent[recent.length - 1];
-    if (start == null || end == null) return null;
-
-    const safeStart = Math.abs(start) < 1e-9 ? 1e-9 : start;
-
-    // Rel amélioration (loss: end < start => positif)
-    let relChangePct;
-    // IMPORTANT: Pour les pourcentages, on veut une lecture plus “logique” (0-100)
-    // - loss: on mesure une amélioration relative de type (start-end)/start
-    // - accuracy: on mesure une amélioration relative de type (end-start)/start
-    // On retourne ensuite un score borné [0..200] (pour éviter l’effet "180%" difficilement lisible)
-    if (label === 'loss') {
-      // amélioration quand la loss baisse
-      const raw = ((safeStart - end) / Math.abs(safeStart)) * 100; // peut être négatif
-      relChangePct = Math.max(-100, Math.min(100, raw));
-    } else {
-      const raw = ((end - safeStart) / Math.abs(safeStart)) * 100;
-      relChangePct = Math.max(-100, Math.min(100, raw));
+    for (let i = 1; i < n; i++) {
+      const prev = recent[i - 1];
+      const current = recent[i]; 
+      if (prev == null || current == null) continue;
+      diffs.push(current - prev);
     }
 
-    // Tolérance pour éviter de classifier comme “diverging” quand l’amélioration est quasi nulle
-    const minAbsImprovementPct = (label === 'loss' ? 1.0 : 0.10); // perte: 1% relatif, accuracy: 0.10 pt relatif
-    const nearPlateau = Math.abs(relChangePct) < minAbsImprovementPct;
+    if (diffs.length === 0) return null;
 
-    const stabilityOk = cv < 1.0; // variance des variations relativement faible
-    const improvementOk = relChangePct >= (label === 'loss' ? 0.5 : 0.1); // seuil relatif minimal
+    const avgDelta = diffs.reduce((sum, value) => sum + value, 0) / diffs.length;
+    const varianceDelta = diffs.reduce((sum, value) => sum + Math.pow(value - avgDelta, 2), 0) / diffs.length;
+    const stdDelta = Math.sqrt(varianceDelta);
+    const stabilityScore = Math.abs(avgDelta) < 1e-9 ? stdDelta : stdDelta / Math.abs(avgDelta);
 
-    if (nearPlateau) {
-      return `Plateau ${relChangePct >= 0 ? '+' : ''}${relChangePct.toFixed(2)}%`;
+    const directionOk = label === 'loss' ? avgDelta < 0 : avgDelta > 0;
+    const improvementOk = Math.abs(avgDelta) >= (label === 'loss' ? 0.01 : 0.005);
+    const stable = stabilityScore < 1.5;
+
+    const labelText = label === 'loss' ? 'loss' : 'accuracy';
+    const improvementText = `${avgDelta >= 0 ? '+' : ''}${avgDelta.toFixed(4)} ${labelText} per round`;
+
+    if (directionOk && stable && improvementOk) {
+      return `Converging ${improvementText}`;
     }
-
-    if (directionOk && stabilityOk && improvementOk) {
-      const dir = relChangePct >= 0 ? '+' : '';
-      return `Converging ${dir}${relChangePct.toFixed(2)}% (stable)`;
+    if (directionOk && stable) {
+      return `Slow convergence ${improvementText}`;
     }
-
-    // Si direction est bonne mais pas stable / amélioration trop faible
-    if (directionOk && !stabilityOk) {
-      return `Unstable ${relChangePct >= 0 ? '+' : ''}${relChangePct.toFixed(2)}%`;
+    if (directionOk && !stable) {
+      return `Unstable ${improvementText}`;
     }
-
-    // Si la direction ne correspond pas
-    if (!directionOk) {
-      const dir = relChangePct >= 0 ? '+' : '';
-      return `Diverging ${dir}${relChangePct.toFixed(2)}%`;
-    }
-
-    // Cas “pas stable / pas assez d’amélioration”
-    return `Plateau ${relChangePct >= 0 ? '+' : ''}${relChangePct.toFixed(2)}%`;
+    return `Diverging ${improvementText}`;
   };
 
   const convergenceValue = (() => {
     const lossConvergence = computeConvergence(realLossSeries, 'loss');
-    if (lossConvergence) {
-      return lossConvergence;
-    }
-    const historyAccuracyConvergence = computeConvergence(realAccuracySeries, 'accuracy');
-    if (historyAccuracyConvergence) {
-      return historyAccuracyConvergence;
-    }
-    const fallbackAccuracyConvergence = computeConvergence(effectiveAccuracySeries, 'accuracy');
-    return fallbackAccuracyConvergence || 'N/A';
+    if (lossConvergence) return lossConvergence;
+    const accuracyConvergence = computeConvergence(realAccuracySeries, 'accuracy');
+    return accuracyConvergence || 'Insufficient data';
   })();
 
   const completedRoundsCount = history.filter(h => h.accuracy != null).length;
@@ -503,7 +439,7 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
     : 'N/A';
 
   const validRoundTimes = history
-    .map(h => Number(h.agg_time))
+    .map(h => Number(h.round_time ?? h.agg_time))
     .filter(t => !Number.isNaN(t) && t > 0);
   const avgRoundTimeValue = validRoundTimes.length > 0
     ? `${(validRoundTimes.reduce((sum, t) => sum + t, 0) / validRoundTimes.length).toFixed(1)}s`
@@ -520,6 +456,19 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
     if (client.state === 'active') return 'active';
     return 'idle';
   };
+
+  // Build a robust excluded set for UI coloring.
+  // Primary source: status.excluded_clients
+  // Secondary source: status.resource_alerts (cpu_limit_exceeded/ram_limit_exceeded)
+  const excludedSet = new Set(status.excluded_clients || []);
+  if (Array.isArray(resourceAlerts)) {
+    resourceAlerts.forEach(a => {
+      if ((a && a.cpu_limit_exceeded) || (a && a.ram_limit_exceeded)) {
+        const cid = a.client_id;
+        if (typeof cid === 'number') excludedSet.add(cid);
+      }
+    });
+  }
 
   // Show loading indicator during initial load
   if (initialLoading) {
@@ -703,6 +652,10 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
               <span>Idle</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <div style={{ width: '12px', height: '12px', background: '#f44336', borderRadius: '2px' }}></div>
+              <span>Excluded</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
               <div style={{ width: '12px', height: '12px', background: '#ef5350', borderRadius: '2px' }}></div>
               <span>Error</span>
             </div>
@@ -712,27 +665,48 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)', gap: '8px' }}>
             {Array.from({ length: NUM_DEVICES }, (_, i) => {
               const client = clients.find(c => c.client_id === i);
+              const isExcluded = excludedSet.has(i);
+
               const state = client ? getPiState(client) : 'idle';
+              
+              // Determine card color: excluded takes priority over state
+              let cardBackground = '#252942'; // default idle
+              if (isExcluded) {
+                cardBackground = '#f44336'; // red for excluded
+              } else if (state === 'active') {
+                cardBackground = '#66bb6a';
+              } else if (state === 'training') {
+                cardBackground = '#4fc3f7';
+              } else if (state === 'error') {
+                cardBackground = '#ef5350';
+              }
+              
               return (
                 <div 
                   key={i}
                   style={{
-                    background: state === 'active' ? '#66bb6a' : state === 'training' ? '#4fc3f7' : state === 'error' ? '#ef5350' : '#252942',
+                    background: cardBackground,
                     borderRadius: '4px',
                     padding: '8px',
-                    border: '1px solid #2d3348',
-                    minHeight: '60px'
+                    border: isExcluded ? '2px solid #d32f2f' : '1px solid #2d3348',
+                    minHeight: '60px',
+                    opacity: isExcluded ? 0.8 : 1
                   }}
                 >
                   <div style={{ fontSize: '10px', fontWeight: '600', color: 'white', marginBottom: '4px' }}>
                     Pi {String(i).padStart(2, '0')}
                   </div>
-                  <div style={{ fontSize: '8px', color: 'rgba(255,255,255,0.7)' }}>
-                    {state.charAt(0).toUpperCase() + state.slice(1)}
+                  <div style={{ fontSize: '8px', color: 'rgba(255,255,255,0.9)', fontWeight: '500' }}>
+                    {isExcluded ? 'Excluded' : state.charAt(0).toUpperCase() + state.slice(1)}
                   </div>
-                  {client && (
+                  {client && !isExcluded && (
                     <div style={{ fontSize: '7px', color: 'rgba(255,255,255,0.6)', marginTop: '4px' }}>
-                      CPU: {client.avg_cpu || 0}% | RAM: {client.avg_memory || 0} MB
+                      CPU: {typeof client.last_cpu !== 'undefined' && client.last_cpu !== null ? (client.last_cpu).toFixed(1) : (client.avg_cpu || 0)}% | RAM: {client.avg_memory || 0} MB
+                    </div>
+                  )}
+                  {isExcluded && (
+                    <div style={{ fontSize: '7px', color: 'rgba(255,255,255,0.7)', marginTop: '4px', fontStyle: 'italic' }}>
+                      Exceeded constraints
                     </div>
                   )}
                 </div>
@@ -992,7 +966,7 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
                         alignItems: 'center'
                       }}>
                         <div style={{ fontWeight: '700', color: '#fff' }}>
-                          Client {alert.client_id} • Last Round
+                          Client {alert.client_id} • {alert.is_current_round ? 'Current Round' : 'Last Round'}
                         </div>
                         <div style={{ fontSize: '11px', color: '#888' }}>
                           {alert.timestamp ? new Date(alert.timestamp).toLocaleTimeString() : 'N/A'}
@@ -1249,7 +1223,7 @@ const bandwidthChartData = bandwidthData.rounds.map((round, idx) => ({
                 </span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: '12px', color: '#ccc' }}>Avg Round Time:</span>
+                <span style={{ fontSize: '12px', color: '#ccc' }}>Avg Round Duration:</span>
                 <span style={{ fontSize: '12px', color: '#fff' }}>
                   {avgRoundTimeValue}
                 </span>

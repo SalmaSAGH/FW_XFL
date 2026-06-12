@@ -16,7 +16,6 @@ import requests
 
 # Add parent directory to path for config import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from db_config import DB_URL
 from config.config_parser import load_config
 
 
@@ -25,7 +24,7 @@ class DashboardServer:
     Real-time dashboard server for FL monitoring with XFL
     """
 
-    def __init__(self, db_url: str = DB_URL, port: int = 5001):
+    def __init__(self, db_url: str = "postgresql://postgres:newpassword@postgres:5432/xfl_metrics", port: int = 5001):
         self.db_url = db_url
         self.port = port
         self.app = Flask(__name__,
@@ -590,13 +589,18 @@ class DashboardServer:
             try:
                 conn = psycopg2.connect(self.db_url)
                 cursor = conn.cursor()
+                session_id = self._get_active_session_id()
+                if session_id is None:
+                    conn.close()
+                    return jsonify({"rounds": []})
+
                 cursor.execute("""
                     SELECT round_number, global_test_accuracy, global_test_loss,
-                           aggregation_time_sec, num_clients, strategy
+                           aggregation_time_sec, round_duration_sec, num_clients, strategy
                     FROM round_metrics
-                    WHERE global_test_accuracy IS NOT NULL
+                    WHERE session_id = %s AND global_test_accuracy IS NOT NULL
                     ORDER BY round_number DESC LIMIT 50
-                """)
+                """, (session_id,))
                 data = cursor.fetchall()
                 conn.close()
                 return jsonify({"rounds": [{
@@ -604,8 +608,9 @@ class DashboardServer:
                     "accuracy": round(row[1], 2) if row[1] else None,
                     "loss": round(row[2], 4) if row[2] else None,
                     "agg_time": round(row[3], 2) if row[3] else None,
-                    "clients": row[4],
-                    "strategy": row[5] if row[5] else 'all_layers'
+                    "round_time": round(row[4], 2) if row[4] else None,
+                    "clients": row[5],
+                    "strategy": row[6] if row[6] else 'all_layers'
                 } for row in data]})
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
@@ -776,7 +781,7 @@ class DashboardServer:
         self.app.run(host='0.0.0.0', port=self.port, debug=debug, threaded=True)
 
 
-def run_dashboard(db_url: str = DB_URL, port: int = 5001):
+def run_dashboard(db_url: str = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics", port: int = 5001):
     DashboardServer(db_url=db_url, port=port).run(debug=False)
 
 
@@ -789,6 +794,6 @@ if __name__ == "__main__":
         db_url = config.server.metrics_db_url
     except Exception as e:
         print(f"⚠️  Could not load config: {e}")
-        db_url = DB_URL
+        db_url = "postgresql://postgres:newpassword@localhost:5432/xfl_metrics"
     run_dashboard(db_url=db_url, port=5001)
 

@@ -145,26 +145,6 @@ def _return_connection(conn):
             pass
 
 
-def init_server_sessions_database():
-    """Initialize server_sessions table in the database"""
-    try:
-        conn = psycopg2.connect(DB_URL)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS server_sessions (
-                session_id   VARCHAR(36)  PRIMARY KEY,
-                started_at   REAL         NOT NULL,
-                hostname     VARCHAR(255),
-                notes        TEXT
-            )
-        """)
-        conn.commit()
-        conn.close()
-        print("Server sessions table initialized")
-    except Exception as e:
-        print(f"WARNING: Warning: Could not initialize server sessions table: {e}")
-
-
 # ── NEW: Register the current session in the database ────────────────────────
 def _register_server_session():
     """
@@ -489,10 +469,14 @@ class FLServer:
         self.client_submissions = []
         self.selected_clients = []
         self.network_simulated_clients = None
+        self.system_constrained_clients = None
+        self.last_system_constrained_clients = []
+        self.excluded_clients = []
         self.lock = threading.Lock()
         
         self.test_loader = None
         self.round_timer = None  # Timer for round timeout
+        self.round_started_at = None
         self.experiment_in_progress = False
         self.experiment_thread = None
         
@@ -623,6 +607,7 @@ class FLServer:
                 self.round_timeout = 300
 
             self.current_round += 1
+            self.round_started_at = time.time()
             self.round_in_progress = True
             self.client_submissions = []
 
@@ -700,6 +685,33 @@ class FLServer:
                 self.network_simulated_clients = []
 
             print(f"   Network simulation active for clients: {self.network_simulated_clients}")
+
+            # Choose which selected clients will have system constraints (CPU/RAM) applied
+            system_constraints_share = float(fl_config.get('systemConstraintsShare', 1.0))
+            system_constraints_share = max(0.0, min(1.0, system_constraints_share))
+            if bool(fl_config.get('systemConstraintsEnabled', False)) and system_constraints_share > 0:
+                if system_constraints_share >= 1.0 or actual_clients_per_round <= 1:
+                    self.system_constrained_clients = list(self.selected_clients)
+                else:
+                    subset_size = max(1, int(round(actual_clients_per_round * system_constraints_share)))
+                    self.system_constrained_clients = random.sample(self.selected_clients, subset_size)
+            else:
+                self.system_constrained_clients = []
+
+            # Keep track of the last constrained clients for alert filtering after round completion
+            self.last_system_constrained_clients = list(self.system_constrained_clients)
+            
+            # Persist exclusion results until the next round completes.
+            # We keep previous round exclusions so the dashboard can still render them (red)
+            # even if the dashboard refresh happens right after start_round() resets the state.
+            # They will be overwritten when we aggregate the new round.
+            # self.excluded_clients = []
+
+            
+            cpu_limit = fl_config.get('cpuLimit', 100)
+            ram_limit = fl_config.get('ramLimit', 2048)
+            print(f"   ✓ System constraints: Enabled={bool(fl_config.get('systemConstraintsEnabled', False))}, Share={system_constraints_share*100:.0f}%, CPU<{cpu_limit}%, RAM<{ram_limit}MB")
+            print(f"   → Clients with constraints: {self.system_constrained_clients if self.system_constrained_clients else 'None'}")
 
             # Track the actual number of clients expected in this round
             self.current_clients_expected = actual_clients_per_round
@@ -909,24 +921,150 @@ class FLServer:
                     self.round_timer.cancel()
                     self.round_timer = None
     
+    def check_and_exclude_constrained_clients(self):
+        """Check clients with system constraints and exclude those who exceeded limits"""
+        self.excluded_clients = []
+        
+        # Only check if system constraints are enabled
+        if not self.system_constrained_clients:
+            return
+        
+        try:
+            conn = psycopg2.connect(DB_URL)
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            
+            cpu_limit = fl_config.get('cpuLimit', 100)
+            ram_limit = fl_config.get('ramLimit', 2048)
+            
+            # Convert list to tuple for SQL IN clause
+            constrained_tuple = tuple(self.system_constrained_clients)
+            
+            # Get max metrics for constrained clients in this round
+            cursor.execute(f"""
+                SELECT client_id, MAX(cpu_percent) as max_cpu, MAX(memory_mb) as max_ram
+                FROM client_metrics
+                WHERE round_number = %s AND session_id = %s AND client_id IN ({','.join(['%s']*len(constrained_tuple))})
+                GROUP BY client_id
+            """, (self.current_round, self.session_id) + constrained_tuple)
+            
+            rows = cursor.fetchall()
+            excluded_list = []
+            
+            for row in rows:
+                max_cpu = float(row['max_cpu']) if row['max_cpu'] is not None else 0
+                max_ram = float(row['max_ram']) if row['max_ram'] is not None else 0
+                cpu_exceeded = max_cpu > cpu_limit
+                ram_exceeded = max_ram > ram_limit
+                
+                if cpu_exceeded or ram_exceeded:
+                    excluded_list.append(row['client_id'])
+                    reason = []
+                    if cpu_exceeded:
+                        reason.append(f"CPU {max_cpu:.1f}% > {cpu_limit}%")
+                    if ram_exceeded:
+                        reason.append(f"RAM {max_ram:.0f}MB > {ram_limit}MB")
+                    print(f"  ⊘ Excluding Client {row['client_id']} from round aggregation - {', '.join(reason)}")
+            
+            self.excluded_clients = excluded_list
+            if excluded_list:
+                print(f"  → Total excluded: {len(excluded_list)} client(s)")
+            
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ Warning: Could not check constrained clients: {e}")
+            self.excluded_clients = []
+    
+    def _check_excluded_clients_realtime(self):
+        """Real-time check for excluded clients during active round"""
+        print(f"[REALTIME] Called: system_constrained_clients={self.system_constrained_clients}, round_in_progress={self.round_in_progress}, current_round={self.current_round}")
+        
+        if not self.system_constrained_clients or not self.round_in_progress:
+            print(f"[REALTIME] Early return - system_constrained_clients empty or round not in progress")
+            return
+        
+        try:
+            conn = psycopg2.connect(DB_URL)
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            
+            cpu_limit = fl_config.get('cpuLimit', 100)
+            ram_limit = fl_config.get('ramLimit', 2048)
+            
+            # Convert list to tuple for SQL IN clause
+            constrained_tuple = tuple(self.system_constrained_clients)
+            
+            # Try current round first
+            sql = f"""
+                SELECT client_id, MAX(cpu_percent) as max_cpu, MAX(memory_mb) as max_ram
+                FROM client_metrics
+                WHERE round_number = %s AND session_id = %s AND client_id IN ({','.join(['%s']*len(constrained_tuple))})
+                GROUP BY client_id
+            """
+            
+            params = (self.current_round, self.session_id) + constrained_tuple
+            print(f"[REALTIME] Checking round {self.current_round}...")
+            
+            cursor.execute(sql, params)
+            rows = cursor.fetchall()
+            print(f"[REALTIME] Round {self.current_round}: {len(rows)} rows")
+            
+            # If no data in current round, try previous round (early in new round)
+            if len(rows) == 0 and self.current_round > 1:
+                print(f"[REALTIME] No data in round {self.current_round}, checking round {self.current_round - 1}...")
+                params = (self.current_round - 1, self.session_id) + constrained_tuple
+                cursor.execute(sql, params)
+                rows = cursor.fetchall()
+                print(f"[REALTIME] Round {self.current_round - 1}: {len(rows)} rows")
+            
+            excluded_list = []
+            
+            for row in rows:
+                max_cpu = float(row['max_cpu']) if row['max_cpu'] is not None else 0
+                max_ram = float(row['max_ram']) if row['max_ram'] is not None else 0
+                
+                print(f"[REALTIME] Client {row['client_id']}: CPU={max_cpu:.1f}%, RAM={max_ram:.1f}MB (limits: CPU<{cpu_limit}%, RAM<{ram_limit}MB)")
+                
+                if max_cpu > cpu_limit or max_ram > ram_limit:
+                    excluded_list.append(row['client_id'])
+                    print(f"[REALTIME] → EXCLUDING Client {row['client_id']}")
+            
+            self.excluded_clients = excluded_list
+            print(f"[REALTIME] Final excluded_clients: {excluded_list}")
+            conn.close()
+        except Exception as e:
+            print(f"[REALTIME] ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+
+    
     def _aggregate_round(self):
         """Aggregate client updates using XFL strategy"""
         # Cancel the timeout timer
         if self.round_timer:
             self.round_timer.cancel()
             self.round_timer = None
+        
+        # Check and exclude clients who exceeded system constraints
+        self.check_and_exclude_constrained_clients()
             
         xfl_info = self.aggregation_strategy.get_xfl_info()
         print(f"\nAggregating {len(self.client_submissions)} clients with XFL: {xfl_info['strategy']}")
+        
+        # Exclude clients who exceeded constraints from aggregation
+        if self.excluded_clients:
+            valid_submissions = [sub for sub in self.client_submissions if sub['client_id'] not in self.excluded_clients]
+            print(f"  Excluding {len(self.excluded_clients)} client(s) that exceeded constraints")
+            print(f"  Using {len(valid_submissions)} valid submission(s) for aggregation")
+        else:
+            valid_submissions = self.client_submissions
 
         start_time = time.time()
 
         try:
             # Extraction des poids et échantillons de chaque client
-            client_weights = [sub["weights"] for sub in self.client_submissions]
-            client_num_samples = [sub["num_samples"] for sub in self.client_submissions]
+            client_weights = [sub["weights"] for sub in valid_submissions]
+            client_num_samples = [sub["num_samples"] for sub in valid_submissions]
             # Dé-quantification si nécessaire
-            has_quantization = any(sub.get("quantization_meta") for sub in self.client_submissions)
+            has_quantization = any(sub.get("quantization_meta") for sub in valid_submissions)
 
             if has_quantization and xfl_info['variant'] == 'quantization':
                 print("   🔧 Applying dequantization before aggregation...")
@@ -986,10 +1124,15 @@ class FLServer:
             except Exception:
                 additional_metrics["aggregation_trigger"] = "unknown"
 
+            round_duration = None
+            if self.round_started_at is not None:
+                round_duration = time.time() - self.round_started_at
+
             self.metrics_collector.store_round_metrics(
                 round_number=self.current_round,
                 num_clients=len(self.client_submissions),
                 aggregation_time=aggregation_time,
+                round_duration=round_duration,
                 global_test_loss=test_loss,
                 global_test_accuracy=test_accuracy,
                 total_samples=sum(client_num_samples),
@@ -1010,6 +1153,7 @@ class FLServer:
         self._save_current_round()
 
         self.round_in_progress = False
+        self.round_started_at = None
         self.client_submissions = []
         
         # Apply pending model change if any
@@ -1135,6 +1279,11 @@ class FLServer:
     
     def get_server_status(self) -> Dict[str, Any]:
         with self.lock:
+            # Real-time check for excluded clients during active round
+            print(f"[DEBUG] get_server_status() called, round_in_progress={self.round_in_progress}, system_constrained_clients={self.system_constrained_clients}")
+            self._check_excluded_clients_realtime()
+            print(f"[DEBUG] After _check_excluded_clients_realtime: excluded_clients={self.excluded_clients}")
+            
             xfl_info = self.aggregation_strategy.get_xfl_info()
             layer_names = list(self.global_model.state_dict().keys())
             num_layers = len(set(name.split('.')[0] for name in layer_names))
@@ -1167,38 +1316,43 @@ class FLServer:
             pending_clients = sorted(list(selected_set - submitted_set))
 
             resource_alerts = []
-            # Only show alerts for the last completed round (not the current one in progress)
-            if not self.round_in_progress:
-                try:
+            # Only build resource alerts after a round has completed
+            try:
+                if not self.round_in_progress:
                     conn = psycopg2.connect(DB_URL)
                     cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
                     cpu_limit = fl_config.get('cpuLimit', 100)
                     ram_limit = fl_config.get('ramLimit', 2048)
-                    
-                    # Get the last completed round (one with global_test_accuracy)
+
+                    # Find last completed round within the active session
                     cursor.execute("""
                         SELECT round_number
                         FROM round_metrics
-                        WHERE global_test_accuracy IS NOT NULL
+                        WHERE session_id = %s AND global_test_accuracy IS NOT NULL
                         ORDER BY round_number DESC
                         LIMIT 1
-                    """)
+                    """, (self.session_id,))
                     last_completed = cursor.fetchone()
-                    
-                    if last_completed:
-                        last_round = last_completed['round_number']
-                        # Get alerts only for the last completed round
+                    alert_round = last_completed['round_number'] if last_completed else None
+
+                    if alert_round is not None:
                         cursor.execute("""
                             SELECT round_number, client_id, cpu_percent, memory_mb, timestamp
                             FROM client_metrics
-                            WHERE round_number = %s
-                              AND ((cpu_percent IS NOT NULL AND cpu_percent > %s) 
+                            WHERE round_number = %s AND session_id = %s
+                              AND ((cpu_percent IS NOT NULL AND cpu_percent > %s)
                                 OR (memory_mb IS NOT NULL AND memory_mb > %s))
                             ORDER BY client_id ASC
-                        """, (last_round, cpu_limit, ram_limit))
+                        """, (alert_round, self.session_id, cpu_limit, ram_limit))
                         rows = cursor.fetchall()
-                        print(f"🔍 DEBUG: Found {len(rows)} resource alerts for round {last_round} (CPU>{cpu_limit}% or RAM>{ram_limit}MB)")
+                        print(f"🔍 DEBUG: Found {len(rows)} resource alerts for round {alert_round} (CPU>{cpu_limit}% or RAM>{ram_limit}MB) in session {self.session_id}")
+                        print(f"🔍 DEBUG: System constraints active for clients: {self.last_system_constrained_clients}")
                         for row in rows:
+                            # Only show alerts for clients with system constraints enabled
+                            if row['client_id'] not in self.last_system_constrained_clients:
+                                print(f"  ⊘ Skipping Client {row['client_id']} (not in system-constrained list)")
+                                continue
+                            
                             alert = {
                                 'round_number': row['round_number'],
                                 'client_id': row['client_id'],
@@ -1209,17 +1363,18 @@ class FLServer:
                                 'ram_limit': ram_limit,
                                 'timestamp': datetime.fromtimestamp(row['timestamp']).isoformat() if row['timestamp'] else None,
                                 'cpu_limit_exceeded': (row['cpu_percent'] is not None and row['cpu_percent'] > cpu_limit),
-                                'ram_limit_exceeded': (row['memory_mb'] is not None and row['memory_mb'] > ram_limit)
+                                'ram_limit_exceeded': (row['memory_mb'] is not None and row['memory_mb'] > ram_limit),
+                                'is_current_round': False
                             }
                             resource_alerts.append(alert)
                             print(f"  → Client {alert['client_id']} R{alert['round_number']}: CPU {alert['cpu_percent']:.1f}% (>{cpu_limit}%={alert['cpu_limit_exceeded']}), RAM {alert['memory_mb']:.1f}MB (>{ram_limit}MB={alert['ram_limit_exceeded']})")
-                    conn.close()
-                except Exception as e:
-                    print(f"WARNING: Could not query resource alerts: {e}")
-                    import traceback
-                    traceback.print_exc()
-            else:
-                print(f"🔍 DEBUG: Skipping resource alerts display - round {self.current_round} in progress")
+                        conn.close()
+                else:
+                    print(f"🔍 DEBUG: Round {self.current_round} in progress — skipping resource alerts until completion")
+            except Exception as e:
+                print(f"WARNING: Could not query resource alerts: {e}")
+                import traceback
+                traceback.print_exc()
 
             return {
                 "current_round": self.current_round,
@@ -1243,6 +1398,7 @@ class FLServer:
                 "experiment_in_progress": self.experiment_in_progress,
                 "cpu_limit": fl_config.get('cpuLimit', 100),
                 "ram_limit": fl_config.get('ramLimit', 2048),
+                "excluded_clients": self.excluded_clients,
                 "resource_alerts": resource_alerts
             }
     
@@ -1292,6 +1448,8 @@ fl_config = {
     "networkPacketLoss": 0,
     "simulateConstraints": False,
     "networkSimulationShare": 0.5,
+    "systemConstraintsEnabled": False,
+    "systemConstraintsShare": 1.0,
     "cpuLimit": 100,
     "ramLimit": 2048,
 }
@@ -1301,7 +1459,6 @@ try:
     init_user_database()
     init_fl_config_database()
     init_server_state_database()
-    init_server_sessions_database()
     # ── NEW: register this docker-compose up as a new session ────────────────
     _register_server_session()
 except Exception as e:
@@ -1366,6 +1523,15 @@ def save_config():
             simulate_constraints = bool(simulate_constraints)
         fl_config['simulateConstraints'] = simulate_constraints
         print(f"Updated simulateConstraints to {fl_config['simulateConstraints']}")
+
+    if 'systemConstraintsEnabled' in data:
+        system_constraints_enabled = data['systemConstraintsEnabled']
+        if isinstance(system_constraints_enabled, str):
+            system_constraints_enabled = system_constraints_enabled.lower() in ('true', '1', 'yes')
+        else:
+            system_constraints_enabled = bool(system_constraints_enabled)
+        fl_config['systemConstraintsEnabled'] = system_constraints_enabled
+        print(f"Updated systemConstraintsEnabled to {fl_config['systemConstraintsEnabled']}")
 
     if fl_server is not None and 'numRounds' in data:
         old_num_rounds = fl_server.num_rounds
@@ -1811,6 +1977,33 @@ def get_clients_data():
                            """, (last_completed_round,))
             active_in_last_round = set(r[0] for r in cursor.fetchall())
 
+        # Fetch per-client CPU for the last completed round (session-scoped if possible)
+        last_cpu_map = {}
+        try:
+            session_id = None
+            if fl_server is not None:
+                srv_status = fl_server.get_server_status()
+                session_id = srv_status.get('session_id')
+
+            if last_completed_round and last_completed_round > 0:
+                if session_id:
+                    cursor.execute("""
+                        SELECT client_id, cpu_percent FROM client_metrics
+                        WHERE round_number = %s AND session_id = %s
+                    """, (last_completed_round, session_id))
+                else:
+                    cursor.execute("""
+                        SELECT client_id, cpu_percent FROM client_metrics
+                        WHERE round_number = %s
+                    """, (last_completed_round,))
+                for cid, cpu in cursor.fetchall():
+                    try:
+                        last_cpu_map[int(cid)] = float(cpu) if cpu is not None else None
+                    except Exception:
+                        last_cpu_map[cid] = cpu
+        except Exception as e:
+            print(f"WARNING: Could not fetch last round CPU per client: {e}")
+
         conn.close()
     except Exception as e:
         print(f"WARNING: Database error in /api/clients: {e}")
@@ -2220,7 +2413,7 @@ def api_get_rounds_history():
         # Get all completed rounds with their metrics
         cursor.execute("""
             SELECT round_number, num_clients, global_test_accuracy, global_test_loss,
-                   aggregation_time_sec, timestamp, metrics_json
+                   aggregation_time_sec, round_duration_sec, timestamp, metrics_json
             FROM round_metrics
             WHERE global_test_accuracy IS NOT NULL
             ORDER BY round_number
@@ -2231,7 +2424,7 @@ def api_get_rounds_history():
 
         rounds = []
         for row in rows:
-            round_num, num_clients, accuracy, loss, agg_time, timestamp, metrics_json = row
+            round_num, num_clients, accuracy, loss, agg_time, round_duration, timestamp, metrics_json = row
 
             # Extract submitted_clients from metrics_json if available
             submitted_clients = []
@@ -2244,10 +2437,10 @@ def api_get_rounds_history():
                 "accuracy": round(accuracy, 2) if accuracy is not None else None,
                 "loss": round(loss, 4) if loss is not None else None,
                 "agg_time": round(agg_time, 2) if agg_time is not None else None,
+                "round_duration": round(round_duration, 2) if round_duration is not None else None,
                 "timestamp": timestamp,
                 "submitted_clients": submitted_clients
             })
-
         return jsonify({"rounds": rounds})
 
     except Exception as e:

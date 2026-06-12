@@ -25,10 +25,13 @@ function Config() {
     networkLatency: 0,
     networkBandwidth: 10,
     networkPacketLoss: 0,
+    networkSimulationShare: 0.5,
     simulateConstraints: false,
     // System Parameters
     cpuLimit: 100,
     ramLimit: 2048,
+    systemConstraintsEnabled: false,
+    systemConstraintsShare: 1.0,
     // Round Timeout
     roundTimeout: 300,
   });
@@ -177,17 +180,29 @@ function Config() {
 
   // System parameter options
   const cpuLimitOptions = [
-    { value: 100, label: '100% (No limit)' },
+    { value: 999999, label: '∞ (No Alert)' },
+    { value: 200, label: '200%' },
+    { value: 150, label: '150%' },
+    { value: 100, label: '100%' },
     { value: 75, label: '75%' },
     { value: 50, label: '50%' },
     { value: 25, label: '25%' },
   ];
 
   const ramLimitOptions = [
+    { value: 999999, label: '∞ (No Limit)' },
+    { value: 4096, label: '4096 MB (4 GB)' },
     { value: 2048, label: '2048 MB (2 GB)' },
     { value: 1024, label: '1024 MB (1 GB)' },
     { value: 512, label: '512 MB' },
     { value: 256, label: '256 MB' },
+  ];
+
+  const constraintShareOptions = [
+    { value: 1.0, label: '100% (All clients)' },
+    { value: 0.75, label: '75% (3 out of 4)' },
+    { value: 0.5, label: '50% (Half)' },
+    { value: 0.25, label: '25% (Quarter)' },
   ];
 
   return (
@@ -292,7 +307,7 @@ function Config() {
               </div>
             </div>
             
-            <div className="grid-3" style={{ marginTop: '24px' }}>
+            <div className="grid-2" style={{ marginTop: '24px' }}>
               <div className="form-group">
                 <label>Latency</label>
                 <select
@@ -331,6 +346,22 @@ function Config() {
                   ))}
                 </select>
               </div>
+
+              <div className="form-group">
+                <label>Network Simulation Share</label>
+                <select
+                  value={config.networkSimulationShare}
+                  disabled={!config.simulateConstraints}
+                  onChange={(e) => handleConfigChange('networkSimulationShare', parseFloat(e.target.value))}
+                >
+                  {constraintShareOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <div style={{ marginTop: '5px', fontSize: '12px', color: '#888' }}>
+                  What fraction of clients get network simulation per round
+                </div>
+              </div>
             </div>
           </div>
 
@@ -338,14 +369,32 @@ function Config() {
           {/* CATEGORY 3: SYSTEM PARAMETERS */}
           {/* ============================================ */}
           <div className="card" style={{ marginBottom: '20px', borderLeft: '4px solid #ffa726' }}>
-            <h2 className="panel-title">
-              💻 System Parameters
-              <span style={{ fontSize: '12px', fontWeight: 'normal', color: '#888', marginLeft: '10px' }}>
-                (CPU, RAM, Clients)
-              </span>
-            </h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '20px', flexWrap: 'wrap' }}>
+              <div>
+                <h2 className="panel-title" style={{ marginBottom: '6px' }}>
+                  💻 System Parameters
+                </h2>
+                <div style={{ fontSize: '12px', fontWeight: '400', color: '#666' }}>
+                  Configure CPU and RAM constraints for selected clients per round.
+                </div>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px', borderRadius: '12px', background: '#fff3e0', border: '1px solid #ffe0b2' }}>
+                <input
+                  type="checkbox"
+                  checked={config.systemConstraintsEnabled}
+                  onChange={(e) => handleConfigChange('systemConstraintsEnabled', e.target.checked)}
+                  style={{ width: '18px', height: '18px', accentColor: '#f57c00' }}
+                />
+                <div>
+                  <div style={{ fontWeight: '700', color: '#e65100' }}>Enable System Constraints</div>
+                  <div style={{ fontSize: '12px', color: '#555', marginTop: '2px' }}>
+                    Toggle CPU/RAM constraints on or off for the next training round.
+                  </div>
+                </div>
+              </div>
+            </div>
             
-            <div className="grid-2">
+            <div className="grid-2" style={{ marginTop: '24px' }}>
               <div className="form-group">
                 <label>CPU Limitation</label>
                 <select
@@ -373,6 +422,22 @@ function Config() {
                 </select>
                 <div style={{ marginTop: '5px', fontSize: '12px', color: '#888' }}>
                   Maximum RAM usage per client
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>CPU/RAM Constraints Share</label>
+                <select
+                  value={config.systemConstraintsShare}
+                  disabled={!config.systemConstraintsEnabled}
+                  onChange={(e) => handleConfigChange('systemConstraintsShare', parseFloat(e.target.value))}
+                >
+                  {constraintShareOptions.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+                <div style={{ marginTop: '5px', fontSize: '12px', color: '#888' }}>
+                  What fraction of clients get CPU/RAM constraints per round
                 </div>
               </div>
 
